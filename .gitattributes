@@ -1,0 +1,7 @@
+# 强制所有文本文件使用 LF 换行符
+* text=auto eol=lf
+
+# 确保二进制文件不被转换（防止图片等损坏）
+*.png binary
+*.jpg binary
+*.ico binary
