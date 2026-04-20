@@ -10,15 +10,16 @@ import (
 var (
 	// 定义一个全局的互斥锁和Map
 	mu     sync.RWMutex
-	groups = make(map[string]*Group)
+	Groups = make(map[string]*Group)
 )
 
 // A Group is a cache namespace and associated data loaded spread over a group of machines
 type Group struct {
-	name      string    // 组名
-	getter    Getter    // 数据源回调（当缓存没命中时，调用这个函数去查数据库）
-	mainCache lru.Cache // 每个组有自己的 LRU 缓存
-	peers     *HTTPPool // 节点管理器（用于去其他节点找数据）
+	name         string    // 组名
+	getter       Getter    // 数据源回调（当缓存没命中时，调用这个函数去查数据库）
+	mainCache    lru.Cache // 每个组有自己的 LRU 缓存
+	peers        *HTTPPool // 节点管理器（用于去其他节点找数据）
+	singleFlight callGroup
 }
 
 // Getter 接口：定义了如何从数据源加载数据
@@ -48,7 +49,7 @@ func NewGroup(name string, cacheBytes int64, getter Getter, peers *HTTPPool) *Gr
 	}
 
 	mu.Lock()
-	groups[name] = g
+	Groups[name] = g
 	mu.Unlock()
 	return g
 }
@@ -56,7 +57,7 @@ func NewGroup(name string, cacheBytes int64, getter Getter, peers *HTTPPool) *Gr
 // GetGroup 根据名字获取组
 func GetGroup(name string) *Group {
 	mu.RLock()
-	g := groups[name]
+	g := Groups[name]
 	mu.RUnlock()
 	return g
 }
@@ -77,22 +78,29 @@ func (g *Group) Get(key string) (ByteView, error) {
 	return g.load(key)
 }
 
-// load 加载数据（从数据源或远程节点）
+// load 负责真正的“回源”操作：从远程节点或数据源获取数据
 func (g *Group) load(key string) (ByteView, error) {
-	// 这里可以使用 singleflight 防止缓存击穿（后面会讲）
-	// 1. 尝试从远程节点获取
-	if g.peers != nil {
-		if peer, addr := g.peers.PickPeer(key); addr != "" {
-			if value, err := g.getFromPeer(peer, g.name, key); err == nil {
-				log.Println("[GeeCache] hit from peer", addr)
-				return value, nil
+	// 使用 singleflight 防止缓存击穿
+	value, err := g.singleFlight.Do(key, func() (interface{}, error) {
+		// 1. 尝试从远程节点获取
+		if g.peers != nil {
+			if peer, addr := g.peers.PickPeer(key); addr != "" {
+				if value, err := g.getFromPeer(peer, g.name, key); err == nil {
+					log.Println("[GeeCache] hit from peer", addr)
+					return value, nil
+				}
+				log.Println("[GeeCache] Failed to get from peer", addr)
 			}
-			log.Println("[GeeCache] Failed to get from peer", addr)
 		}
-	}
 
-	// 2. 远程也没有，查数据库（调用 Getter）
-	return g.getLocally(key)
+		// 2. 远程也没有，查数据库（调用 Getter）
+		return g.getLocally(key)
+	})
+	if err != nil {
+		return ByteView{}, err
+	}
+	return value.(ByteView), nil
+
 }
 
 // getFromPeer 从远程节点获取数据
@@ -101,6 +109,9 @@ func (g *Group) getFromPeer(peer *httpGetter, group string, key string) (ByteVie
 	bytes, err := peer.Get(group, key)
 	log.Println("[GeeCache] get from peer", peer.baseURL, group, key)
 	if err != nil {
+		if g.peers != nil {
+			g.peers.RemovePeer(peer.baseURL)
+		}
 		return ByteView{}, err
 	}
 	return NewByteView(bytes), nil

@@ -2,6 +2,7 @@ package lru
 
 import (
 	"container/list"
+	"sync"
 )
 
 // Node 双链表节点
@@ -17,6 +18,7 @@ type Cache struct {
 	ll        *list.List
 	cache     map[string]*list.Element
 	onEvicted func(key string, value Value)
+	mu        sync.Mutex
 }
 
 type Value interface {
@@ -34,6 +36,9 @@ func New(maxBytes int64, onEvicted func(key string, value Value)) *Cache {
 }
 
 func (c *Cache) Add(key string, value Value) {
+	//加锁，确保线程安全
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	//如果key存在，更新value
 	if ele, ok := c.cache[key]; ok {
 		c.ll.MoveToFront(ele)
@@ -61,6 +66,10 @@ func (c *Cache) Add(key string, value Value) {
 }
 
 func (c *Cache) Get(key string) (value Value, ok bool) {
+	//加锁，确保线程安全
+	//获取缓存中的节点
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if ele, ok := c.cache[key]; ok {
 		c.ll.MoveToFront(ele)
 		return ele.Value.(*Node).value, true

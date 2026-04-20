@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package geecache;
+option go_package = "./pb";
+
+//请求结构
+message Request {
+  string group = 1;
+  string key = 2;
+}
+
+//响应结构
+message Response {
+  bytes value = 1;
+}
+
+//gRPC 服务
+service CacheService {
+  rpc Get(Request) returns (Response);
+}

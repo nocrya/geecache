@@ -4,6 +4,7 @@ import (
 	"hash/crc32"
 	"sort"
 	"strconv"
+	"sync"
 )
 
 // Hash 函数类型，用于将数据映射到环上
@@ -15,6 +16,7 @@ type Map struct {
 	replicas int            // 虚拟节点的倍数（例如 3，表示 1 个真实节点对应 3 个虚拟节点）
 	keys     []int          // 哈希环上的所有虚拟节点哈希值（有序数组，用于二分查找）
 	hashMap  map[int]string // 映射关系：虚拟节点的哈希值 -> 真实节点的名称
+	mu       sync.RWMutex   // 读写锁，用于并发安全
 }
 
 // New 构造函数
@@ -32,8 +34,16 @@ func New(replicas int, fn Hash) *Map {
 	return m
 }
 
+func (m *Map) IsEmpty() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.keys) == 0
+}
+
 // Add 添加真实节点到哈希环
 func (m *Map) Add(keys ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, key := range keys {
 		// 1. 为每个真实节点创建 replicas 个虚拟节点
 		for i := 0; i < m.replicas; i++ {
@@ -54,6 +64,9 @@ func (m *Map) Add(keys ...string) {
 
 // Get 根据 key 选择对应的真实节点
 func (m *Map) Get(key string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	if len(m.keys) == 0 {
 		return ""
 	}
@@ -72,4 +85,25 @@ func (m *Map) Get(key string) string {
 	// 如果 idx == len(keys)，说明 key 的哈希值比环上所有节点都大
 	// 根据环的特性，应该回到头部（取模运算），即选择 keys[0]
 	return m.hashMap[m.keys[idx%len(m.keys)]]
+}
+
+// 添加Remove方法
+func (m *Map) Remove(key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	newKeys := make([]int, 0, len(m.keys))
+	for _, hash := range m.keys {
+		if m.hashMap[hash] != key {
+			newKeys = append(newKeys, hash)
+		}
+	}
+	m.keys = newKeys
+
+	//清理一下映射关系
+	for hash, node := range m.hashMap {
+		if node == key {
+			delete(m.hashMap, hash)
+		}
+	}
 }

@@ -55,7 +55,7 @@ func (p *HTTPPool) Set(peers ...string) {
 	// 2. 为每个节点创建一个 httpGetter 客户端
 	p.httpGetters = make(map[string]*httpGetter, len(peers))
 	for _, peer := range peers {
-		p.httpGetters[peer] = &httpGetter{baseURL: peer + p.basePath}
+		p.httpGetters[peer] = &httpGetter{baseURL: peer + p.basePath, remover: p}
 	}
 }
 
@@ -75,6 +75,13 @@ func (p *HTTPPool) PickPeer(key string) (*httpGetter, string) {
 func (p *HTTPPool) AddPeers(peers ...string) {
 	log.Println("[GeeCache] AddPeers", peers)
 	p.Set(peers...)
+}
+
+func (p *HTTPPool) RemovePeer(peer string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	log.Println("[GeeCache] RemovePeer", peer)
+	p.peers.Remove(peer)
 }
 
 func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -116,10 +123,7 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 type httpGetter struct {
 	baseURL string
-}
-
-type PeerGetter interface {
-	Get(group string, key string) ([]byte, error)
+	remover PeerRemover
 }
 
 // Get 向远程节点请求数据
@@ -130,6 +134,9 @@ func (h *httpGetter) Get(group string, key string) ([]byte, error) {
 
 	res, err := http.Get(url)
 	if err != nil {
+		if h.remover != nil {
+			h.remover.RemovePeer(h.baseURL)
+		}
 		return nil, err
 	}
 	defer res.Body.Close()
