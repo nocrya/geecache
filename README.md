@@ -91,8 +91,8 @@ curl http://localhost:8001/geecache/scores/Tom
 MIT License
 
 ## 待做事项
-- 增加并发测试
-- 支持gRPC协议通信
-- 实现节点故障自动摘除
-- 添加单元测试
+- 引入真正的服务发现 (集成 Etcd/Consul)
+- 增强稳定性 (熔断与限流)
+- 集成 OpenTelemetry + Jaeger，实现分布式链路追踪。
+- 实现连接池
 
