@@ -11,16 +11,12 @@ import (
 
 type GRPCServer struct {
 	pb.UnimplementedCacheServiceServer
-	groups *map[string]*Group
 }
 
-func NewGRPCServer(groups *map[string]*Group) *grpc.Server {
-	s := &GRPCServer{
-		groups: groups,
-	}
+func NewGRPCServer() *grpc.Server {
 
 	grpcServer := grpc.NewServer()
-	pb.RegisterCacheServiceServer(grpcServer, s)
+	pb.RegisterCacheServiceServer(grpcServer, &GRPCServer{})
 	reflection.Register(grpcServer)
 
 	return grpcServer

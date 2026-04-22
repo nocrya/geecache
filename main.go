@@ -7,7 +7,9 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
 )
 
@@ -19,14 +21,38 @@ var db = map[string]string{
 
 func main() {
 	var port int
-	flag.IntVar(&port, "port", 8001, "geecache server port")
-	flag.Parse()
+	var etcdAddrs string
+	var useEtcd bool
+	var useGRPC bool
 
-	peers := []string{"http://localhost:8001", "http://localhost:8002", "http://localhost:8003"}
+	flag.IntVar(&port, "port", 8001, "geecache server port")
+	flag.StringVar(&etcdAddrs, "etcd", "http://localhost:2379", "etcd endpoints (comma-separated)")
+	flag.BoolVar(&useEtcd, "use-etcd", true, "use etcd for service discovery")
+	flag.BoolVar(&useGRPC, "use-grpc", true, "use grpc for communication")
+	flag.Parse()
 
 	listenAddr := fmt.Sprintf(":%d", port)
 	selfAddr := fmt.Sprintf("http://localhost:%d", port)
-	pool := geecache.NewHTTPPool(selfAddr, peers...)
+
+	// 创建 HTTPPool（先不指定 peers，从 etcd 动态获取）
+	pool := geecache.NewHTTPPool(selfAddr)
+
+	pool.UseGRPC(useGRPC)
+	// 集成 etcd
+	if useEtcd {
+		etcdEndpoints := strings.Split(etcdAddrs, ",")
+		log.Printf("[GeeCache] Connecting to etcd: %v", etcdEndpoints)
+		err := pool.RegisterWithEtcd(etcdEndpoints, 10) // TTL 10秒
+		if err != nil {
+			log.Fatalf("[GeeCache] Failed to register with etcd: %v", err)
+		}
+		log.Println("[GeeCache] Registered with etcd successfully")
+	} else {
+		// 如果不使用 etcd，使用硬编码的 peers
+		peers := []string{"http://localhost:8001", "http://localhost:8002", "http://localhost:8003"}
+		pool.AddPeers(peers...)
+		log.Printf("[GeeCache] Using hardcoded peers: %v", peers)
+	}
 
 	geecache.NewGroup("scores", 2<<10, geecache.GetterFunc(
 		func(key string) ([]byte, error) {
@@ -51,16 +77,25 @@ func main() {
 	// 启动gRPC服务，直接传入grpcL监听器
 	go func() {
 		log.Printf("[GeeCache] gRPC server listening on %s (via cmux)", listenAddr)
-		grpcServer := geecache.NewGRPCServer(&geecache.Groups)
+		grpcServer := geecache.NewGRPCServer()
 		if err := grpcServer.Serve(grpcL); err != nil {
 			log.Fatal(err)
 		}
 	}()
 
-	// 启动HTTP服务
+	// 启动HTTP服务：/metrics 走 Prometheus，其余 /geecache/... 走缓存
 	go func() {
-		log.Printf("[GeeCache] HTTP server listening on %s (via cmux)", listenAddr)
-		if err := http.Serve(httpL, geecache.DefaultPool); err != nil {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/geecache") {
+				geecache.DefaultPool.ServeHTTP(w, r)
+				return
+			}
+			http.NotFound(w, r)
+		})
+		log.Printf("[GeeCache] HTTP server listening on %s (via cmux), metrics at /metrics", listenAddr)
+		if err := http.Serve(httpL, mux); err != nil {
 			log.Fatal(err)
 		}
 	}()

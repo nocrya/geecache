@@ -3,8 +3,10 @@ package geecache
 import (
 	"fmt"
 	"geecache/lru"
+	"geecache/metrics"
 	"log"
 	"sync"
+	"time"
 )
 
 var (
@@ -15,10 +17,10 @@ var (
 
 // A Group is a cache namespace and associated data loaded spread over a group of machines
 type Group struct {
-	name         string    // 组名
-	getter       Getter    // 数据源回调（当缓存没命中时，调用这个函数去查数据库）
-	mainCache    lru.Cache // 每个组有自己的 LRU 缓存
-	peers        *HTTPPool // 节点管理器（用于去其他节点找数据）
+	name         string     // 组名
+	getter       Getter     // 数据源回调（当缓存没命中时，调用这个函数去查数据库）
+	mainCache    *lru.Cache // 每个组有自己的 LRU 缓存
+	peers        PeerPicker // 节点管理器（用于去其他节点找数据）
 	singleFlight callGroup
 }
 
@@ -35,17 +37,19 @@ func (f GetterFunc) Get(key string) ([]byte, error) {
 }
 
 // NewGroup 创建一个组
-func NewGroup(name string, cacheBytes int64, getter Getter, peers *HTTPPool) *Group {
+func NewGroup(name string, cacheBytes int64, getter Getter, peers PeerPicker) *Group {
 	if getter == nil {
 		panic("nil Getter")
 	}
 	log.Println("[GeeCache] NewGroup", name)
 
 	g := &Group{
-		name:      name,
-		getter:    getter,
-		mainCache: *lru.New(cacheBytes, nil), // 这里需要调整 lru.Cache 的字段导出
-		peers:     peers,
+		name:   name,
+		getter: getter,
+		mainCache: lru.New(cacheBytes, func(key string, value lru.Value) {
+			metrics.CacheEvictions.WithLabelValues(name).Inc()
+		}),
+		peers: peers,
 	}
 
 	mu.Lock()
@@ -70,6 +74,7 @@ func (g *Group) Get(key string) (ByteView, error) {
 
 	// 1. 先查本地缓存
 	if v, ok := g.mainCache.Get(key); ok {
+		metrics.CacheHits.WithLabelValues(g.name).Inc()
 		log.Println("[GeeCache] hit")
 		return v.(ByteView), nil
 	}
@@ -104,29 +109,35 @@ func (g *Group) load(key string) (ByteView, error) {
 }
 
 // getFromPeer 从远程节点获取数据
-func (g *Group) getFromPeer(peer *httpGetter, group string, key string) (ByteView, error) {
-
+func (g *Group) getFromPeer(peer PeerGetter, group string, key string) (ByteView, error) {
+	start := time.Now()
 	bytes, err := peer.Get(group, key)
-	log.Println("[GeeCache] get from peer", peer.baseURL, group, key)
+	metrics.PeerRequestDuration.WithLabelValues(g.name, peer.Proto()).Observe(time.Since(start).Seconds())
+
 	if err != nil {
-		if g.peers != nil {
-			g.peers.RemovePeer(peer.baseURL)
-		}
+		metrics.LoadErrors.WithLabelValues(g.name, "peer").Inc()
+		log.Println("[GeeCache] get from peer error", err)
 		return ByteView{}, err
 	}
-	return NewByteView(bytes), nil
+	log.Println("[GeeCache] get from peer", peer.Peer(), group, key)
+	value := NewByteView(bytes)
+	g.mainCache.Add(key, value)
+	metrics.Loads.WithLabelValues(g.name, "peer").Inc()
+	return value, nil
 }
 
 // getLocally 从本地数据源获取
 func (g *Group) getLocally(key string) (ByteView, error) {
 	bytes, err := g.getter.Get(key)
 	if err != nil {
+		metrics.LoadErrors.WithLabelValues(g.name, "getter").Inc()
 		return ByteView{}, err
 	}
 
 	value := NewByteView(bytes)
 	// 写入缓存
 	g.mainCache.Add(key, value)
+	metrics.Loads.WithLabelValues(g.name, "getter").Inc()
 	log.Println("[GeeCache] Add to cache", key)
 	return value, nil
 }
