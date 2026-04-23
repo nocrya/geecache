@@ -1,6 +1,7 @@
 package geecache
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -201,6 +202,29 @@ func (p *HTTPPool) UseGRPC(useGRPC bool) {
 	p.mu.Lock()
 	p.useGRPC = useGRPC
 	p.mu.Unlock()
+}
+
+// Stop 释放资源：关闭所有 gRPC 到 peer 的连接，并撤销 etcd 租约、关闭 etcd 客户端。
+// 应在停止对外监听之后或与之并发调用前，先通过 gRPC/HTTP 的 GracefulStop/Shutdown 停止接收新请求。
+func (p *HTTPPool) Stop(ctx context.Context) error {
+	p.mu.Lock()
+	reg := p.registry
+	p.registry = nil
+	for _, c := range p.grpcClients {
+		if c != nil && c.conn != nil {
+			_ = c.conn.Close()
+		}
+	}
+	p.grpcClients = make(map[string]*GRPCClient)
+	p.httpGetters = make(map[string]*httpGetter)
+	p.mu.Unlock()
+
+	if reg != nil {
+		if err := reg.RevokeAndClose(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type httpGetter struct {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"geecache/lru"
 	"geecache/metrics"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -41,7 +41,7 @@ func NewGroup(name string, cacheBytes int64, getter Getter, peers PeerPicker) *G
 	if getter == nil {
 		panic("nil Getter")
 	}
-	log.Println("[GeeCache] NewGroup", name)
+	slog.Info("group_created", "group", name)
 
 	g := &Group{
 		name:   name,
@@ -75,7 +75,7 @@ func (g *Group) Get(key string) (ByteView, error) {
 	// 1. 先查本地缓存
 	if v, ok := g.mainCache.Get(key); ok {
 		metrics.CacheHits.WithLabelValues(g.name).Inc()
-		log.Println("[GeeCache] hit")
+		slog.Info("cache_hit_local", "group", g.name, "key", key)
 		return v.(ByteView), nil
 	}
 
@@ -91,10 +91,10 @@ func (g *Group) load(key string) (ByteView, error) {
 		if g.peers != nil {
 			if peer, addr := g.peers.PickPeer(key); addr != "" {
 				if value, err := g.getFromPeer(peer, g.name, key); err == nil {
-					log.Println("[GeeCache] hit from peer", addr)
+					slog.Info("cache_hit_peer", "group", g.name, "key", key, "peer", addr)
 					return value, nil
 				}
-				log.Println("[GeeCache] Failed to get from peer", addr)
+				slog.Warn("cache_peer_miss", "group", g.name, "key", key, "peer", addr)
 			}
 		}
 
@@ -116,10 +116,10 @@ func (g *Group) getFromPeer(peer PeerGetter, group string, key string) (ByteView
 
 	if err != nil {
 		metrics.LoadErrors.WithLabelValues(g.name, "peer").Inc()
-		log.Println("[GeeCache] get from peer error", err)
+		slog.Error("cache_peer_get_failed", "group", g.name, "key", key, "peer", peer.Peer(), "proto", peer.Proto(), "err", err)
 		return ByteView{}, err
 	}
-	log.Println("[GeeCache] get from peer", peer.Peer(), group, key)
+	slog.Info("cache_peer_get_ok", "group", group, "key", key, "peer", peer.Peer(), "proto", peer.Proto())
 	value := NewByteView(bytes)
 	g.mainCache.Add(key, value)
 	metrics.Loads.WithLabelValues(g.name, "peer").Inc()
@@ -131,6 +131,7 @@ func (g *Group) getLocally(key string) (ByteView, error) {
 	bytes, err := g.getter.Get(key)
 	if err != nil {
 		metrics.LoadErrors.WithLabelValues(g.name, "getter").Inc()
+		slog.Warn("cache_getter_failed", "group", g.name, "key", key, "err", err)
 		return ByteView{}, err
 	}
 
@@ -138,6 +139,6 @@ func (g *Group) getLocally(key string) (ByteView, error) {
 	// 写入缓存
 	g.mainCache.Add(key, value)
 	metrics.Loads.WithLabelValues(g.name, "getter").Inc()
-	log.Println("[GeeCache] Add to cache", key)
+	slog.Info("cache_load_getter", "group", g.name, "key", key)
 	return value, nil
 }

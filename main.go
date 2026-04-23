@@ -1,13 +1,21 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"geecache/geecache"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
@@ -30,6 +38,10 @@ func main() {
 	flag.BoolVar(&useEtcd, "use-etcd", true, "use etcd for service discovery")
 	flag.BoolVar(&useGRPC, "use-grpc", true, "use grpc for communication")
 	flag.Parse()
+
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})))
 
 	listenAddr := fmt.Sprintf(":%d", port)
 	selfAddr := fmt.Sprintf("http://localhost:%d", port)
@@ -70,39 +82,73 @@ func main() {
 
 	m := cmux.New(lis)
 
-	// 处理分流请求
 	grpcL := m.Match(cmux.HTTP2HeaderField("content-type", "application/grpc"))
 	httpL := m.Match(cmux.HTTP1())
 
-	// 启动gRPC服务，直接传入grpcL监听器
+	grpcServer := geecache.NewGRPCServer()
+
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	// 标准 pprof（与 import _ "net/http/pprof" 等价，但挂在本 mux 上）；勿对公网暴露。
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/geecache") {
+			geecache.DefaultPool.ServeHTTP(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	})
+	httpServer := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
 	go func() {
 		log.Printf("[GeeCache] gRPC server listening on %s (via cmux)", listenAddr)
-		grpcServer := geecache.NewGRPCServer()
 		if err := grpcServer.Serve(grpcL); err != nil {
-			log.Fatal(err)
+			log.Printf("[GeeCache] gRPC serve: %v", err)
 		}
 	}()
 
-	// 启动HTTP服务：/metrics 走 Prometheus，其余 /geecache/... 走缓存
 	go func() {
-		mux := http.NewServeMux()
-		mux.Handle("/metrics", promhttp.Handler())
-		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			if strings.HasPrefix(r.URL.Path, "/geecache") {
-				geecache.DefaultPool.ServeHTTP(w, r)
-				return
-			}
-			http.NotFound(w, r)
-		})
-		log.Printf("[GeeCache] HTTP server listening on %s (via cmux), metrics at /metrics", listenAddr)
-		if err := http.Serve(httpL, mux); err != nil {
-			log.Fatal(err)
+		log.Printf("[GeeCache] HTTP server listening on %s (via cmux); /metrics /debug/pprof/", listenAddr)
+		if err := httpServer.Serve(httpL); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("[GeeCache] HTTP serve: %v", err)
 		}
 	}()
 
-	// 开始复用
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		sig := <-sigCh
+		log.Printf("[GeeCache] received %v, shutting down...", sig)
+
+		shutCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		grpcServer.GracefulStop()
+
+		if err := httpServer.Shutdown(shutCtx); err != nil {
+			log.Printf("[GeeCache] HTTP shutdown: %v", err)
+		}
+
+		if err := pool.Stop(shutCtx); err != nil {
+			log.Printf("[GeeCache] pool stop: %v", err)
+		}
+
+		if err := lis.Close(); err != nil {
+			log.Printf("[GeeCache] listener close: %v", err)
+		}
+	}()
+
 	log.Printf("[GeeCache] is running at %s (HTTP & gRPC)", listenAddr)
 	if err := m.Serve(); err != nil {
-		log.Fatal(err)
+		log.Printf("[GeeCache] cmux: %v", err)
 	}
+	log.Println("[GeeCache] bye")
 }
