@@ -1,11 +1,13 @@
 package geecache
 
 import (
+	"errors"
 	"fmt"
 	"geecache/lru"
 	"log"
 	"sync"
 	"testing"
+	"time"
 )
 
 // 模拟数据源
@@ -18,8 +20,8 @@ var db = map[string]string{
 func TestGroupGet(t *testing.T) {
 	loadCounts := make(map[string]int, len(db))
 
-	// 创建一个 Group，设置最大缓存条目数为 3
-	group := NewGroup("scores", 3, GetterFunc(
+	// 创建一个 Group（main / hot 容量按字节；测试数据很小，给足即可）
+	group := NewGroup("scores", 4096, 4096, "lru", 0, 0, 0, 0, 0, GetterFunc(
 		func(key string) ([]byte, error) {
 			log.Printf("从数据源获取 %s", key)
 			// 记录加载次数，用于验证 singleflight 是否生效
@@ -27,11 +29,12 @@ func TestGroupGet(t *testing.T) {
 			if v, ok := db[key]; ok {
 				return []byte(v), nil
 			}
-			return nil, fmt.Errorf("%s not found", key)
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, key)
 		}), nil)
 
-	// 1. 基础功能测试
-	for k, v := range db {
+	// 1. 基础功能测试（故意不预热 Sam，留给下面的并发 miss 场景）
+	for _, k := range []string{"Tom", "Jack"} {
+		v := db[k]
 		if view, err := group.Get(k); err != nil || view.String() != v {
 			t.Fatalf("failed to get value of %s, want %s, got %v", k, v, view)
 		}
@@ -40,7 +43,6 @@ func TestGroupGet(t *testing.T) {
 	// 2. 并发测试 (模拟缓存击穿)
 	const n = 10 // 并发数量
 	var wg sync.WaitGroup
-	// 重置计数
 	loadCounts["Sam"] = 0
 
 	// 同时请求一个不存在的键（或者清空缓存后请求存在的键）
@@ -97,4 +99,117 @@ func TestLRUConcurrency(t *testing.T) {
 
 	wg.Wait()
 	t.Log("LRU 并发读写测试通过")
+}
+
+func TestGroupTTL(t *testing.T) {
+	loads := 0
+	g := NewGroup("ttltest", 4096, 0, "lru", 80*time.Millisecond, 0, 0, 0, 0, GetterFunc(func(key string) ([]byte, error) {
+		loads++
+		return []byte("v"), nil
+	}), nil)
+
+	if _, err := g.Get("k"); err != nil {
+		t.Fatal(err)
+	}
+	if loads != 1 {
+		t.Fatalf("first get: want 1 load, got %d", loads)
+	}
+	if _, err := g.Get("k"); err != nil {
+		t.Fatal(err)
+	}
+	if loads != 1 {
+		t.Fatalf("second get (still fresh): want 1 load, got %d", loads)
+	}
+
+	time.Sleep(120 * time.Millisecond)
+	if _, err := g.Get("k"); err != nil {
+		t.Fatal(err)
+	}
+	if loads != 2 {
+		t.Fatalf("after TTL: want 2 loads, got %d", loads)
+	}
+}
+
+func TestNegativeCache(t *testing.T) {
+	loads := 0
+	g := NewGroup("negtest", 4096, 0, "lru", 0, 0, 200*time.Millisecond, 0, 0, GetterFunc(func(key string) ([]byte, error) {
+		loads++
+		return nil, fmt.Errorf("%w", ErrNotFound)
+	}), nil)
+
+	_, err := g.Get("ghost")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+	if loads != 1 {
+		t.Fatalf("first miss: want 1 getter, got %d", loads)
+	}
+	_, err = g.Get("ghost")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second: want ErrNotFound, got %v", err)
+	}
+	if loads != 1 {
+		t.Fatalf("negative hit: want still 1 getter, got %d", loads)
+	}
+	time.Sleep(250 * time.Millisecond)
+	_, err = g.Get("ghost")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("after neg ttl: want ErrNotFound, got %v", err)
+	}
+	if loads != 2 {
+		t.Fatalf("after neg expiry: want 2 getter calls, got %d", loads)
+	}
+}
+
+func TestBloomMissBlock(t *testing.T) {
+	loads := 0
+	g := NewGroup("bloomtest", 4096, 0, "lru", 0, 0, 0, 10000, 0.0001, GetterFunc(func(key string) ([]byte, error) {
+		loads++
+		return nil, fmt.Errorf("%w", ErrNotFound)
+	}), nil)
+
+	_, err := g.Get("x")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+	if loads != 1 {
+		t.Fatalf("want 1 load, got %d", loads)
+	}
+	_, err = g.Get("x")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+	if loads != 1 {
+		t.Fatalf("bloom should block second getter, got loads=%d", loads)
+	}
+}
+
+func TestCacheTTLJitterNoPanic(t *testing.T) {
+	loads := 0
+	g := NewGroup("jit", 4096, 0, "lru", 50*time.Millisecond, 25*time.Millisecond, 0, 0, 0, GetterFunc(func(key string) ([]byte, error) {
+		loads++
+		return []byte("x"), nil
+	}), nil)
+	for range 20 {
+		if _, err := g.Get("k"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if loads != 1 {
+		t.Fatalf("want 1 load (all cache hits), got %d", loads)
+	}
+}
+
+func TestGroupLFUEvictionSmoke(t *testing.T) {
+	g := NewGroup("lfug", 256, 0, "lfu", 0, 0, 0, 0, 0, GetterFunc(func(key string) ([]byte, error) {
+		return []byte(key), nil
+	}), nil)
+	for _, k := range []string{"a", "b", "c", "d"} {
+		if _, err := g.Get(k); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := g.Get("a"); err != nil {
+		t.Fatal(err)
+	}
 }

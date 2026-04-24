@@ -65,6 +65,21 @@ func (c *Cache) Add(key string, value Value) {
 	c.usedBytes += int64(len(key)) + int64(value.Len())
 }
 
+// Remove deletes key if present. Does not invoke onEvicted (used for tier moves, not capacity eviction).
+func (c *Cache) Remove(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ele, ok := c.cache[key]
+	if !ok {
+		return false
+	}
+	c.ll.Remove(ele)
+	node := ele.Value.(*Node)
+	delete(c.cache, node.key)
+	c.usedBytes -= int64(len(node.key)) + int64(node.value.Len())
+	return true
+}
+
 func (c *Cache) Get(key string) (value Value, ok bool) {
 	//加锁，确保线程安全
 	//获取缓存中的节点

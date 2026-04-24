@@ -32,11 +32,23 @@ func main() {
 	var etcdAddrs string
 	var useEtcd bool
 	var useGRPC bool
+	var cacheTTL time.Duration
+	var cacheTTLJitter time.Duration
+	var negTTL time.Duration
+	var bloomN int
+	var bloomFP float64
+	var eviction string
 
 	flag.IntVar(&port, "port", 8001, "geecache server port")
 	flag.StringVar(&etcdAddrs, "etcd", "http://localhost:2379", "etcd endpoints (comma-separated)")
 	flag.BoolVar(&useEtcd, "use-etcd", true, "use etcd for service discovery")
 	flag.BoolVar(&useGRPC, "use-grpc", true, "use grpc for communication")
+	flag.DurationVar(&cacheTTL, "cache-ttl", 0, "LRU entry TTL (0 = no expiry)")
+	flag.DurationVar(&cacheTTLJitter, "cache-ttl-jitter", 0, "extra random TTL per entry uniform [0,jitter] (0 = fixed ttl)")
+	flag.DurationVar(&negTTL, "neg-ttl", 0, "TTL for negative cache of ErrNotFound from getter (0 = off)")
+	flag.IntVar(&bloomN, "bloom-n", 0, "Bloom filter estimated keys for miss-set (0 = off)")
+	flag.Float64Var(&bloomFP, "bloom-fp", 0.01, "Bloom false-positive rate when bloom-n > 0")
+	flag.StringVar(&eviction, "eviction", "lru", "main/hot eviction policy: lru | lfu")
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
@@ -66,13 +78,13 @@ func main() {
 		log.Printf("[GeeCache] Using hardcoded peers: %v", peers)
 	}
 
-	geecache.NewGroup("scores", 2<<10, geecache.GetterFunc(
+	geecache.NewGroup("scores", 2<<10, 2<<10, eviction, cacheTTL, cacheTTLJitter, negTTL, bloomN, bloomFP, geecache.GetterFunc(
 		func(key string) ([]byte, error) {
 			log.Println("[SlowDB] search key", key)
 			if v, ok := db[key]; ok {
 				return []byte(v), nil
 			}
-			return nil, fmt.Errorf("key %s not found", key)
+			return nil, fmt.Errorf("%w: %s", geecache.ErrNotFound, key)
 		}), pool)
 
 	lis, err := net.Listen("tcp", listenAddr)
