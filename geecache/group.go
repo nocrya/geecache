@@ -43,6 +43,9 @@ type Group struct {
 
 	peers        PeerPicker
 	singleFlight callGroup
+
+	// persist 可选：Getter 回源 / Set 写入 main 后落盘；main 淘汰时写入冷数据；Invalidate/Purge 删盘。
+	persist *BoltStore
 }
 
 // Getter 接口：定义了如何从数据源加载数据
@@ -62,24 +65,33 @@ func (f GetterFunc) Get(key string) ([]byte, error) {
 // ttl<=0 时不为条目设置过期；ttl>0 时 main/hot 中条目在 Get 时做惰性淘汰。
 // ttlJitter>0 时实际过期时间为 ttl + uniform(0, ttlJitter)；为 0 则每条目固定 ttl。
 // negTTL>0 时对 Getter 返回的 ErrNotFound 做空值缓存（Get 短路）；bloomN>0 时额外用布隆记录未命中并在轮换周期内短路 Getter（有假阳性，见 bloomRotate）。
-func NewGroup(name string, cacheBytes int64, hotBytes int64, eviction string, ttl, ttlJitter, negTTL time.Duration, bloomN int, bloomFP float64, getter Getter, peers PeerPicker) *Group {
+// persist 非 nil 时启用 Bolt 冷存储；warm 为 true 时在注册进 Groups 前从 Bolt 预热 main。
+func NewGroup(name string, cacheBytes int64, hotBytes int64, eviction string, ttl, ttlJitter, negTTL time.Duration, bloomN int, bloomFP float64, getter Getter, peers PeerPicker, persist *BoltStore, warm bool) *Group {
 	if getter == nil {
 		panic("nil Getter")
 	}
 	if bloomN > 0 && bloomFP <= 0 {
 		bloomFP = 0.01
 	}
-	slog.Info("group_created", "group", name, "eviction", eviction, "hot_bytes", hotBytes, "ttl", ttl, "ttl_jitter", ttlJitter, "neg_ttl", negTTL, "bloom_n", bloomN, "bloom_fp", bloomFP)
+	slog.Info("group_created", "group", name, "eviction", eviction, "hot_bytes", hotBytes, "ttl", ttl, "ttl_jitter", ttlJitter, "neg_ttl", negTTL, "bloom_n", bloomN, "bloom_fp", bloomFP, "persist", persist != nil, "warm", warm)
 
+	var g *Group
 	onMain := func(key string, value lru.Value) {
 		metrics.CacheEvictions.WithLabelValues(name, "main").Inc()
+		if g != nil && g.persist != nil {
+			if b := valueToPersistBytes(value); len(b) > 0 {
+				if err := g.persist.Put(g.name, key, b); err != nil {
+					slog.Warn("persist_put_evict", "group", name, "key", key, "err", err)
+				}
+			}
+		}
 	}
 	onHot := func(key string, value lru.Value) {
 		metrics.CacheEvictions.WithLabelValues(name, "hot").Inc()
 	}
 	main, hot := buildCacheStores(eviction, cacheBytes, hotBytes, onMain, onHot)
 
-	g := &Group{
+	g = &Group{
 		name:      name,
 		getter:    getter,
 		ttl:       ttl,
@@ -88,6 +100,7 @@ func NewGroup(name string, cacheBytes int64, hotBytes int64, eviction string, tt
 		negUntil:  make(map[string]time.Time),
 		mainCache: main,
 		peers:     peers,
+		persist:   persist,
 	}
 	if hotBytes > 0 {
 		g.hotCache = hot
@@ -103,10 +116,64 @@ func NewGroup(name string, cacheBytes int64, hotBytes int64, eviction string, tt
 		}
 	}
 
+	if persist != nil && warm {
+		n, err := g.warmFromBolt()
+		if err != nil {
+			slog.Warn("cache_warm", "group", name, "loaded", n, "err", err)
+		} else {
+			slog.Info("cache_warm", "group", name, "loaded", n)
+		}
+	}
+
 	mu.Lock()
 	Groups[name] = g
 	mu.Unlock()
 	return g
+}
+
+func valueToPersistBytes(v lru.Value) []byte {
+	if v == nil {
+		return nil
+	}
+	switch t := v.(type) {
+	case ByteView:
+		return t.ByteSlice()
+	case ttlEntry:
+		return t.view.ByteSlice()
+	default:
+		return nil
+	}
+}
+
+func (g *Group) warmFromBolt() (int, error) {
+	if g.persist == nil {
+		return 0, nil
+	}
+	n := 0
+	err := g.persist.LoadGroup(g.name, func(key string, val []byte) error {
+		g.putTier(g.mainCache, key, NewByteView(val))
+		n++
+		return nil
+	})
+	return n, err
+}
+
+func (g *Group) persistPutView(key string, v ByteView) {
+	if g.persist == nil {
+		return
+	}
+	if err := g.persist.Put(g.name, key, v.ByteSlice()); err != nil {
+		slog.Warn("persist_put", "group", g.name, "key", key, "err", err)
+	}
+}
+
+func (g *Group) persistDeleteKey(key string) {
+	if g.persist == nil {
+		return
+	}
+	if err := g.persist.Delete(g.name, key); err != nil {
+		slog.Warn("persist_delete", "group", g.name, "key", key, "err", err)
+	}
 }
 
 // GetGroup 根据名字获取组
@@ -189,6 +256,7 @@ func (g *Group) load(key string) (ByteView, error) {
 			return nil, err
 		}
 		g.putTier(g.mainCache, key, value)
+		g.persistPutView(key, value)
 		if g.hotCache != nil {
 			g.hotCache.Remove(key)
 		}
@@ -200,6 +268,88 @@ func (g *Group) load(key string) (ByteView, error) {
 	}
 	return value.(ByteView), nil
 
+}
+
+// Set 写入缓存：非归属节点会转发到 owner；owner 写本地 main 并向其它节点广播 Invalidate。
+// 不写穿 Getter / DB（演示层缓存）。
+func (g *Group) Set(key string, value []byte) error {
+	if key == "" {
+		return fmt.Errorf("key is required")
+	}
+	if pw, ok := g.peers.(PeerWriter); ok && pw != nil && !pw.IsOwner(key) {
+		return pw.ForwardSet(g.name, key, value)
+	}
+	return g.setLocalAndBroadcast(key, value)
+}
+
+// PurgeKey 删除本机该 key 并向其它节点发 Invalidate（仅删缓存）。非 owner 会转发到 owner。
+func (g *Group) PurgeKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("key is required")
+	}
+	if pw, ok := g.peers.(PeerWriter); ok && pw != nil && !pw.IsOwner(key) {
+		return pw.ForwardPurge(g.name, key)
+	}
+	if err := g.InvalidateLocal(key); err != nil {
+		return err
+	}
+	if pw, ok := g.peers.(PeerWriter); ok && pw != nil {
+		if err := pw.BroadcastInvalidate(g.name, key); err != nil {
+			slog.Warn("cache_purge_broadcast", "group", g.name, "key", key, "err", err)
+			return err
+		}
+	}
+	return nil
+}
+
+// InvalidateLocal 仅删除本机 main/hot 与负缓存、布隆中与 key 相关状态；不广播。
+func (g *Group) InvalidateLocal(key string) error {
+	if key == "" {
+		return fmt.Errorf("key is required")
+	}
+	g.negMu.Lock()
+	delete(g.negUntil, key)
+	g.negMu.Unlock()
+	g.resetMissBloom()
+	if g.mainCache != nil {
+		g.mainCache.Remove(key)
+	}
+	if g.hotCache != nil {
+		g.hotCache.Remove(key)
+	}
+	g.persistDeleteKey(key)
+	slog.Info("cache_invalidate_local", "group", g.name, "key", key)
+	return nil
+}
+
+func (g *Group) setLocalAndBroadcast(key string, value []byte) error {
+	view := NewByteView(value)
+	g.negMu.Lock()
+	delete(g.negUntil, key)
+	g.negMu.Unlock()
+	g.resetMissBloom()
+	g.putTier(g.mainCache, key, view)
+	g.persistPutView(key, view)
+	if g.hotCache != nil {
+		g.hotCache.Remove(key)
+	}
+	if pw, ok := g.peers.(PeerWriter); ok && pw != nil {
+		if err := pw.BroadcastInvalidate(g.name, key); err != nil {
+			slog.Warn("cache_broadcast_invalidate", "group", g.name, "key", key, "err", err)
+			return err
+		}
+	}
+	return nil
+}
+
+func (g *Group) resetMissBloom() {
+	if g.missBloom == nil || g.bloomN <= 0 {
+		return
+	}
+	g.missBloomMu.Lock()
+	g.missBloom = bloom.NewWithEstimates(uint(g.bloomN), g.bloomFP)
+	g.missBloomStart = time.Now()
+	g.missBloomMu.Unlock()
 }
 
 // getFromPeer 从远程节点获取数据
@@ -260,6 +410,7 @@ func (g *Group) peekTier(c lru.CacheStore, key string) (ByteView, bool) {
 	e := vi.(ttlEntry)
 	if time.Now().After(e.until) {
 		c.Remove(key)
+		g.persistDeleteKey(key)
 		metrics.CacheExpired.WithLabelValues(g.name).Inc()
 		return ByteView{}, false
 	}

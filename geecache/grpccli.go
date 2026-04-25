@@ -37,7 +37,6 @@ func NewGRPCClient(peer string, target string, remover PeerRemover) (*GRPCClient
 func (c *GRPCClient) Get(group string, key string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultGRPCTimeout)
 	defer cancel()
-
 	rsp, err := c.stub.Get(ctx, &pb.Request{
 		Group: group,
 		Key:   key,
@@ -49,8 +48,49 @@ func (c *GRPCClient) Get(group string, key string) ([]byte, error) {
 		}
 		return nil, err
 	}
-
 	return rsp.Value, nil
+}
+
+// Set 在远端节点执行写入（归属校验在服务端）。
+func (c *GRPCClient) Set(group, key string, value []byte) error {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultGRPCTimeout)
+	defer cancel()
+	_, err := c.stub.Set(ctx, &pb.SetRequest{Group: group, Key: key, Value: value})
+	if err != nil {
+		if c.remover != nil {
+			c.remover.RemovePeer(c.peer)
+		}
+		return err
+	}
+	return nil
+}
+
+// Invalidate 仅失效远端本机条目。
+func (c *GRPCClient) Invalidate(group, key string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultGRPCTimeout)
+	defer cancel()
+	_, err := c.stub.Invalidate(ctx, &pb.InvalidateRequest{Group: group, Key: key})
+	if err != nil {
+		if c.remover != nil {
+			c.remover.RemovePeer(c.peer)
+		}
+		return err
+	}
+	return nil
+}
+
+// Purge 在远端归属节点执行 PurgeKey。
+func (c *GRPCClient) Purge(group, key string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultGRPCTimeout)
+	defer cancel()
+	_, err := c.stub.Purge(ctx, &pb.InvalidateRequest{Group: group, Key: key})
+	if err != nil {
+		if c.remover != nil {
+			c.remover.RemovePeer(c.peer)
+		}
+		return err
+	}
+	return nil
 }
 
 func (c *GRPCClient) Peer() string  { return c.peer }

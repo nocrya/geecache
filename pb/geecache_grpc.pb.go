@@ -19,7 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	CacheService_Get_FullMethodName = "/geecache.CacheService/Get"
+	CacheService_Get_FullMethodName        = "/geecache.CacheService/Get"
+	CacheService_Set_FullMethodName        = "/geecache.CacheService/Set"
+	CacheService_Invalidate_FullMethodName = "/geecache.CacheService/Invalidate"
+	CacheService_Purge_FullMethodName      = "/geecache.CacheService/Purge"
 )
 
 // CacheServiceClient is the client API for CacheService service.
@@ -29,6 +32,12 @@ const (
 // gRPC 服务
 type CacheServiceClient interface {
 	Get(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error)
+	// 在归属节点写入并失效其它节点副本
+	Set(ctx context.Context, in *SetRequest, opts ...grpc.CallOption) (*Empty, error)
+	// 仅删除本机该 key 的缓存（用于 owner 广播失效）
+	Invalidate(ctx context.Context, in *InvalidateRequest, opts ...grpc.CallOption) (*Empty, error)
+	// 归属节点：删本机并向其它节点发 Invalidate
+	Purge(ctx context.Context, in *InvalidateRequest, opts ...grpc.CallOption) (*Empty, error)
 }
 
 type cacheServiceClient struct {
@@ -49,6 +58,36 @@ func (c *cacheServiceClient) Get(ctx context.Context, in *Request, opts ...grpc.
 	return out, nil
 }
 
+func (c *cacheServiceClient) Set(ctx context.Context, in *SetRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, CacheService_Set_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cacheServiceClient) Invalidate(ctx context.Context, in *InvalidateRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, CacheService_Invalidate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cacheServiceClient) Purge(ctx context.Context, in *InvalidateRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, CacheService_Purge_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CacheServiceServer is the server API for CacheService service.
 // All implementations must embed UnimplementedCacheServiceServer
 // for forward compatibility.
@@ -56,6 +95,12 @@ func (c *cacheServiceClient) Get(ctx context.Context, in *Request, opts ...grpc.
 // gRPC 服务
 type CacheServiceServer interface {
 	Get(context.Context, *Request) (*Response, error)
+	// 在归属节点写入并失效其它节点副本
+	Set(context.Context, *SetRequest) (*Empty, error)
+	// 仅删除本机该 key 的缓存（用于 owner 广播失效）
+	Invalidate(context.Context, *InvalidateRequest) (*Empty, error)
+	// 归属节点：删本机并向其它节点发 Invalidate
+	Purge(context.Context, *InvalidateRequest) (*Empty, error)
 	mustEmbedUnimplementedCacheServiceServer()
 }
 
@@ -68,6 +113,15 @@ type UnimplementedCacheServiceServer struct{}
 
 func (UnimplementedCacheServiceServer) Get(context.Context, *Request) (*Response, error) {
 	return nil, status.Error(codes.Unimplemented, "method Get not implemented")
+}
+func (UnimplementedCacheServiceServer) Set(context.Context, *SetRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method Set not implemented")
+}
+func (UnimplementedCacheServiceServer) Invalidate(context.Context, *InvalidateRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method Invalidate not implemented")
+}
+func (UnimplementedCacheServiceServer) Purge(context.Context, *InvalidateRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method Purge not implemented")
 }
 func (UnimplementedCacheServiceServer) mustEmbedUnimplementedCacheServiceServer() {}
 func (UnimplementedCacheServiceServer) testEmbeddedByValue()                      {}
@@ -108,6 +162,60 @@ func _CacheService_Get_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CacheService_Set_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CacheServiceServer).Set(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CacheService_Set_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CacheServiceServer).Set(ctx, req.(*SetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CacheService_Invalidate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InvalidateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CacheServiceServer).Invalidate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CacheService_Invalidate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CacheServiceServer).Invalidate(ctx, req.(*InvalidateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CacheService_Purge_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InvalidateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CacheServiceServer).Purge(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CacheService_Purge_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CacheServiceServer).Purge(ctx, req.(*InvalidateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // CacheService_ServiceDesc is the grpc.ServiceDesc for CacheService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -118,6 +226,18 @@ var CacheService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Get",
 			Handler:    _CacheService_Get_Handler,
+		},
+		{
+			MethodName: "Set",
+			Handler:    _CacheService_Set_Handler,
+		},
+		{
+			MethodName: "Invalidate",
+			Handler:    _CacheService_Invalidate_Handler,
+		},
+		{
+			MethodName: "Purge",
+			Handler:    _CacheService_Purge_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

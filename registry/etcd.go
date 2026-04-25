@@ -162,6 +162,45 @@ func (r *EtcdRegistry) Watch(prefix string, handler func([]*clientv3.Event)) {
 	}()
 }
 
+// PutKV 写入任意 KV（如失效通知）。ctx 用于超时；client 关闭后返回错误。
+func (r *EtcdRegistry) PutKV(ctx context.Context, key, val string) (*clientv3.PutResponse, error) {
+	r.mu.Lock()
+	c := r.client
+	r.mu.Unlock()
+	if c == nil {
+		return nil, fmt.Errorf("registry: client closed")
+	}
+	return c.Put(ctx, key, val)
+}
+
+// WatchPrefix 在 ctx 取消或 client 关闭前持续监听 prefix；handler 在每次收到事件时调用。
+func (r *EtcdRegistry) WatchPrefix(ctx context.Context, prefix string, handler func([]*clientv3.Event)) {
+	go func() {
+		for ctx.Err() == nil {
+			r.mu.Lock()
+			c := r.client
+			r.mu.Unlock()
+			if c == nil {
+				return
+			}
+			ch := c.Watch(ctx, prefix, clientv3.WithPrefix())
+			for wresp := range ch {
+				if ctx.Err() != nil {
+					return
+				}
+				if err := wresp.Err(); err != nil {
+					log.Printf("registry: watch %q: %v", prefix, err)
+					time.Sleep(time.Second)
+					break
+				}
+				if len(wresp.Events) > 0 {
+					handler(wresp.Events)
+				}
+			}
+		}
+	}()
+}
+
 // GetServices 获取当前所有服务列表（用于初始化）
 func (r *EtcdRegistry) GetServices(prefix string) ([]string, error) {
 	rsp, err := r.client.Get(context.Background(), prefix, clientv3.WithPrefix())

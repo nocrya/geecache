@@ -3,7 +3,9 @@ module geecache
 go 1.25.0
 
 require (
+	github.com/bits-and-blooms/bloom/v3 v3.6.0
 	github.com/prometheus/client_golang v1.22.0
+	go.etcd.io/bbolt v1.4.3
 	go.etcd.io/etcd/client/v3 v3.6.10
 	google.golang.org/grpc v1.80.0
 	google.golang.org/protobuf v1.36.11
@@ -12,7 +14,6 @@ require (
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.10.0 // indirect
-	github.com/bits-and-blooms/bloom/v3 v3.6.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect

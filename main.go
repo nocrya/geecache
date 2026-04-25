@@ -38,6 +38,10 @@ func main() {
 	var bloomN int
 	var bloomFP float64
 	var eviction string
+	var etcdInval bool
+	var persistPath string
+	var warmOnStart bool
+	var warmKeys string
 
 	flag.IntVar(&port, "port", 8001, "geecache server port")
 	flag.StringVar(&etcdAddrs, "etcd", "http://localhost:2379", "etcd endpoints (comma-separated)")
@@ -49,6 +53,10 @@ func main() {
 	flag.IntVar(&bloomN, "bloom-n", 0, "Bloom filter estimated keys for miss-set (0 = off)")
 	flag.Float64Var(&bloomFP, "bloom-fp", 0.01, "Bloom false-positive rate when bloom-n > 0")
 	flag.StringVar(&eviction, "eviction", "lru", "main/hot eviction policy: lru | lfu")
+	flag.BoolVar(&etcdInval, "etcd-inval", true, "when use-etcd, publish/listen cache invalidations on etcd (phase 4)")
+	flag.StringVar(&persistPath, "persist-path", "", "BoltDB file path for cold cache (empty=off)")
+	flag.BoolVar(&warmOnStart, "warm", true, "when persist-path set, load bolt entries into main on startup")
+	flag.StringVar(&warmKeys, "warm-keys", "", "comma-separated keys to load via Getter after startup (preheat from backing store)")
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
@@ -71,6 +79,11 @@ func main() {
 			log.Fatalf("[GeeCache] Failed to register with etcd: %v", err)
 		}
 		log.Println("[GeeCache] Registered with etcd successfully")
+		if etcdInval {
+			if err := pool.EnableEtcdInvalidation(geecache.DefaultEtcdInvalidationPrefix); err != nil {
+				log.Printf("[GeeCache] etcd invalidation not started: %v", err)
+			}
+		}
 	} else {
 		// 如果不使用 etcd，使用硬编码的 peers
 		peers := []string{"http://localhost:8001", "http://localhost:8002", "http://localhost:8003"}
@@ -78,14 +91,38 @@ func main() {
 		log.Printf("[GeeCache] Using hardcoded peers: %v", peers)
 	}
 
-	geecache.NewGroup("scores", 2<<10, 2<<10, eviction, cacheTTL, cacheTTLJitter, negTTL, bloomN, bloomFP, geecache.GetterFunc(
+	var boltStore *geecache.BoltStore
+	if persistPath != "" {
+		var err error
+		boltStore, err = geecache.OpenBoltStore(persistPath)
+		if err != nil {
+			log.Fatalf("[GeeCache] persist-path: %v", err)
+		}
+		log.Printf("[GeeCache] Bolt persist enabled: %s", persistPath)
+	}
+
+	scores := geecache.NewGroup("scores", 2<<10, 2<<10, eviction, cacheTTL, cacheTTLJitter, negTTL, bloomN, bloomFP, geecache.GetterFunc(
 		func(key string) ([]byte, error) {
 			log.Println("[SlowDB] search key", key)
 			if v, ok := db[key]; ok {
 				return []byte(v), nil
 			}
 			return nil, fmt.Errorf("%w: %s", geecache.ErrNotFound, key)
-		}), pool)
+		}), pool, boltStore, warmOnStart && persistPath != "")
+
+	if warmKeys != "" {
+		for _, k := range strings.Split(warmKeys, ",") {
+			k = strings.TrimSpace(k)
+			if k == "" {
+				continue
+			}
+			if _, err := scores.Get(k); err != nil {
+				log.Printf("[GeeCache] warm-keys %q: %v", k, err)
+			} else {
+				log.Printf("[GeeCache] warm-keys loaded %q", k)
+			}
+		}
+	}
 
 	lis, err := net.Listen("tcp", listenAddr)
 	if err != nil {
@@ -151,6 +188,15 @@ func main() {
 
 		if err := pool.Stop(shutCtx); err != nil {
 			log.Printf("[GeeCache] pool stop: %v", err)
+		}
+
+		if boltStore != nil {
+			if err := boltStore.Sync(); err != nil {
+				log.Printf("[GeeCache] bolt sync: %v", err)
+			}
+			if err := boltStore.Close(); err != nil {
+				log.Printf("[GeeCache] bolt close: %v", err)
+			}
 		}
 
 		if err := lis.Close(); err != nil {

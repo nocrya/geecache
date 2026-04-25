@@ -3,18 +3,37 @@ syntax = "proto3";
 package geecache;
 option go_package = "./pb";
 
-//请求结构
+// 请求结构
 message Request {
   string group = 1;
   string key = 2;
 }
 
-//响应结构
+// 响应结构
 message Response {
   bytes value = 1;
 }
 
-//gRPC 服务
+message SetRequest {
+  string group = 1;
+  string key = 2;
+  bytes value = 3;
+}
+
+message InvalidateRequest {
+  string group = 1;
+  string key = 2;
+}
+
+message Empty {}
+
+// gRPC 服务
 service CacheService {
   rpc Get(Request) returns (Response);
+  // 在归属节点写入并失效其它节点副本
+  rpc Set(SetRequest) returns (Empty);
+  // 仅删除本机该 key 的缓存（用于 owner 广播失效）
+  rpc Invalidate(InvalidateRequest) returns (Empty);
+  // 归属节点：删本机并向其它节点发 Invalidate
+  rpc Purge(InvalidateRequest) returns (Empty);
 }

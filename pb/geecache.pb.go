@@ -119,6 +119,154 @@ func (x *Response) GetValue() []byte {
 	return nil
 }
 
+type SetRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Group         string                 `protobuf:"bytes,1,opt,name=group,proto3" json:"group,omitempty"`
+	Key           string                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
+	Value         []byte                 `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetRequest) Reset() {
+	*x = SetRequest{}
+	mi := &file_geecache_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetRequest) ProtoMessage() {}
+
+func (x *SetRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_geecache_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetRequest.ProtoReflect.Descriptor instead.
+func (*SetRequest) Descriptor() ([]byte, []int) {
+	return file_geecache_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *SetRequest) GetGroup() string {
+	if x != nil {
+		return x.Group
+	}
+	return ""
+}
+
+func (x *SetRequest) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *SetRequest) GetValue() []byte {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+type InvalidateRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Group         string                 `protobuf:"bytes,1,opt,name=group,proto3" json:"group,omitempty"`
+	Key           string                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InvalidateRequest) Reset() {
+	*x = InvalidateRequest{}
+	mi := &file_geecache_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InvalidateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InvalidateRequest) ProtoMessage() {}
+
+func (x *InvalidateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_geecache_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InvalidateRequest.ProtoReflect.Descriptor instead.
+func (*InvalidateRequest) Descriptor() ([]byte, []int) {
+	return file_geecache_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *InvalidateRequest) GetGroup() string {
+	if x != nil {
+		return x.Group
+	}
+	return ""
+}
+
+func (x *InvalidateRequest) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+type Empty struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Empty) Reset() {
+	*x = Empty{}
+	mi := &file_geecache_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Empty) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Empty) ProtoMessage() {}
+
+func (x *Empty) ProtoReflect() protoreflect.Message {
+	mi := &file_geecache_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Empty.ProtoReflect.Descriptor instead.
+func (*Empty) Descriptor() ([]byte, []int) {
+	return file_geecache_proto_rawDescGZIP(), []int{4}
+}
+
 var File_geecache_proto protoreflect.FileDescriptor
 
 const file_geecache_proto_rawDesc = "" +
@@ -128,9 +276,22 @@ const file_geecache_proto_rawDesc = "" +
 	"\x05group\x18\x01 \x01(\tR\x05group\x12\x10\n" +
 	"\x03key\x18\x02 \x01(\tR\x03key\" \n" +
 	"\bResponse\x12\x14\n" +
-	"\x05value\x18\x01 \x01(\fR\x05value2<\n" +
+	"\x05value\x18\x01 \x01(\fR\x05value\"J\n" +
+	"\n" +
+	"SetRequest\x12\x14\n" +
+	"\x05group\x18\x01 \x01(\tR\x05group\x12\x10\n" +
+	"\x03key\x18\x02 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x03 \x01(\fR\x05value\";\n" +
+	"\x11InvalidateRequest\x12\x14\n" +
+	"\x05group\x18\x01 \x01(\tR\x05group\x12\x10\n" +
+	"\x03key\x18\x02 \x01(\tR\x03key\"\a\n" +
+	"\x05Empty2\xdd\x01\n" +
 	"\fCacheService\x12,\n" +
-	"\x03Get\x12\x11.geecache.Request\x1a\x12.geecache.ResponseB\x06Z\x04./pbb\x06proto3"
+	"\x03Get\x12\x11.geecache.Request\x1a\x12.geecache.Response\x12,\n" +
+	"\x03Set\x12\x14.geecache.SetRequest\x1a\x0f.geecache.Empty\x12:\n" +
+	"\n" +
+	"Invalidate\x12\x1b.geecache.InvalidateRequest\x1a\x0f.geecache.Empty\x125\n" +
+	"\x05Purge\x12\x1b.geecache.InvalidateRequest\x1a\x0f.geecache.EmptyB\x06Z\x04./pbb\x06proto3"
 
 var (
 	file_geecache_proto_rawDescOnce sync.Once
@@ -144,16 +305,25 @@ func file_geecache_proto_rawDescGZIP() []byte {
 	return file_geecache_proto_rawDescData
 }
 
-var file_geecache_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_geecache_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_geecache_proto_goTypes = []any{
-	(*Request)(nil),  // 0: geecache.Request
-	(*Response)(nil), // 1: geecache.Response
+	(*Request)(nil),           // 0: geecache.Request
+	(*Response)(nil),          // 1: geecache.Response
+	(*SetRequest)(nil),        // 2: geecache.SetRequest
+	(*InvalidateRequest)(nil), // 3: geecache.InvalidateRequest
+	(*Empty)(nil),             // 4: geecache.Empty
 }
 var file_geecache_proto_depIdxs = []int32{
 	0, // 0: geecache.CacheService.Get:input_type -> geecache.Request
-	1, // 1: geecache.CacheService.Get:output_type -> geecache.Response
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
+	2, // 1: geecache.CacheService.Set:input_type -> geecache.SetRequest
+	3, // 2: geecache.CacheService.Invalidate:input_type -> geecache.InvalidateRequest
+	3, // 3: geecache.CacheService.Purge:input_type -> geecache.InvalidateRequest
+	1, // 4: geecache.CacheService.Get:output_type -> geecache.Response
+	4, // 5: geecache.CacheService.Set:output_type -> geecache.Empty
+	4, // 6: geecache.CacheService.Invalidate:output_type -> geecache.Empty
+	4, // 7: geecache.CacheService.Purge:output_type -> geecache.Empty
+	4, // [4:8] is the sub-list for method output_type
+	0, // [0:4] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -170,7 +340,7 @@ func file_geecache_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_geecache_proto_rawDesc), len(file_geecache_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
