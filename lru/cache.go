@@ -5,13 +5,13 @@ import (
 	"sync"
 )
 
-// Node 双链表节点
+// Node 双向链表节点，承载 key 与实现了 Value 接口的值。
 type Node struct {
 	key   string
 	value Value
 }
 
-// Cache 缓存结构体
+// Cache 按字节上限约束的 LRU 缓存：链表越靠前越新，淘汰从表尾取。
 type Cache struct {
 	maxBytes  int64
 	usedBytes int64
@@ -21,10 +21,12 @@ type Cache struct {
 	mu        sync.Mutex
 }
 
+// Value 缓存值需能报告自身占用的字节数（与 key 一起计入 usedBytes）。
 type Value interface {
 	Len() int
 }
 
+// New 创建 LRU，maxBytes 为总字节上限；onEvicted 在因容量淘汰最旧项时调用（Remove 不触发）。
 func New(maxBytes int64, onEvicted func(key string, value Value)) *Cache {
 	return &Cache{
 		maxBytes:  maxBytes,
@@ -35,27 +37,25 @@ func New(maxBytes int64, onEvicted func(key string, value Value)) *Cache {
 	}
 }
 
+// Add 插入或更新；超容量时从表尾反复淘汰直至能容纳。
 func (c *Cache) Add(key string, value Value) {
-	//加锁，确保线程安全
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	//如果key存在，更新value
+	// key 已存在：移到表头并更新 value，必要时淘汰旧项为新 value 腾空间。
 	if ele, ok := c.cache[key]; ok {
 		c.ll.MoveToFront(ele)
 		c.usedBytes -= int64(ele.Value.(*Node).value.Len())
 		for c.usedBytes+int64(value.Len()) > c.maxBytes {
-			c.removeOldest()
+			c.evictOneLocked()
 		}
 		ele.Value.(*Node).value = value
 		c.usedBytes += int64(value.Len())
 		return
 	}
-	//如果key不存在，添加新节点
-	//检查容量限制，超出则删除最老的节点
+	// 新 key：淘汰直至 key+value 能放下，再插到表头。
 	for c.usedBytes+int64(len(key))+int64(value.Len()) > c.maxBytes {
-		c.removeOldest()
+		c.evictOneLocked()
 	}
-	//添加新节点
 	node := &Node{
 		key:   key,
 		value: value,
@@ -65,7 +65,7 @@ func (c *Cache) Add(key string, value Value) {
 	c.usedBytes += int64(len(key)) + int64(value.Len())
 }
 
-// Remove deletes key if present. Does not invoke onEvicted (used for tier moves, not capacity eviction).
+// Remove 若存在则删除该 key；不调用 onEvicted（用于分层挪移、显式删除，与容量淘汰语义区分）。
 func (c *Cache) Remove(key string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -80,9 +80,8 @@ func (c *Cache) Remove(key string) bool {
 	return true
 }
 
+// Get 命中则将对应结点移到表头（视为最近使用）。
 func (c *Cache) Get(key string) (value Value, ok bool) {
-	//加锁，确保线程安全
-	//获取缓存中的节点
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if ele, ok := c.cache[key]; ok {
@@ -92,16 +91,14 @@ func (c *Cache) Get(key string) (value Value, ok bool) {
 	return nil, false
 }
 
-func (c *Cache) removeOldest() {
-	//1.获取链表的最后一个节点
+// evictOneLocked 从表尾删除最久未使用的一项，并回调 onEvicted。
+func (c *Cache) evictOneLocked() {
 	ele := c.ll.Back()
 	if ele != nil {
-		///2.从链表和缓存map中删除该节点
 		c.ll.Remove(ele)
 		node := ele.Value.(*Node)
 		delete(c.cache, node.key)
 		c.usedBytes -= int64(len(node.key)) + int64(node.value.Len())
-		//3.调用回调函数
 		if c.onEvicted != nil {
 			c.onEvicted(node.key, node.value)
 		}

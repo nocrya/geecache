@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	pb "geecache/pb"
+	"log"
 	"time"
 
 	"google.golang.org/grpc"
@@ -34,6 +35,20 @@ func NewGRPCClient(peer string, target string, remover PeerRemover) (*GRPCClient
 	}, nil
 }
 
+func (c *GRPCClient) Test(group string, key string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultGRPCTimeout)
+	defer cancel()
+	rsp, err := c.stub.Test(ctx, &pb.Request{
+		Group: group,
+		Key:   key,
+	})
+	log.Println("GRPCClient Test", group, key, rsp, err)
+	if err != nil {
+		return nil, err
+	}
+	return rsp.Value, nil
+}
+
 func (c *GRPCClient) Get(group string, key string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultGRPCTimeout)
 	defer cancel()
@@ -41,6 +56,8 @@ func (c *GRPCClient) Get(group string, key string) ([]byte, error) {
 		Group: group,
 		Key:   key,
 	})
+
+	log.Println("GRPCClient Get", group, key, rsp, err)
 
 	if err != nil {
 		if c.remover != nil {

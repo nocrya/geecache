@@ -285,8 +285,9 @@ const file_geecache_proto_rawDesc = "" +
 	"\x11InvalidateRequest\x12\x14\n" +
 	"\x05group\x18\x01 \x01(\tR\x05group\x12\x10\n" +
 	"\x03key\x18\x02 \x01(\tR\x03key\"\a\n" +
-	"\x05Empty2\xdd\x01\n" +
-	"\fCacheService\x12,\n" +
+	"\x05Empty2\x8c\x02\n" +
+	"\fCacheService\x12-\n" +
+	"\x04Test\x12\x11.geecache.Request\x1a\x12.geecache.Response\x12,\n" +
 	"\x03Get\x12\x11.geecache.Request\x1a\x12.geecache.Response\x12,\n" +
 	"\x03Set\x12\x14.geecache.SetRequest\x1a\x0f.geecache.Empty\x12:\n" +
 	"\n" +
@@ -314,16 +315,18 @@ var file_geecache_proto_goTypes = []any{
 	(*Empty)(nil),             // 4: geecache.Empty
 }
 var file_geecache_proto_depIdxs = []int32{
-	0, // 0: geecache.CacheService.Get:input_type -> geecache.Request
-	2, // 1: geecache.CacheService.Set:input_type -> geecache.SetRequest
-	3, // 2: geecache.CacheService.Invalidate:input_type -> geecache.InvalidateRequest
-	3, // 3: geecache.CacheService.Purge:input_type -> geecache.InvalidateRequest
-	1, // 4: geecache.CacheService.Get:output_type -> geecache.Response
-	4, // 5: geecache.CacheService.Set:output_type -> geecache.Empty
-	4, // 6: geecache.CacheService.Invalidate:output_type -> geecache.Empty
-	4, // 7: geecache.CacheService.Purge:output_type -> geecache.Empty
-	4, // [4:8] is the sub-list for method output_type
-	0, // [0:4] is the sub-list for method input_type
+	0, // 0: geecache.CacheService.Test:input_type -> geecache.Request
+	0, // 1: geecache.CacheService.Get:input_type -> geecache.Request
+	2, // 2: geecache.CacheService.Set:input_type -> geecache.SetRequest
+	3, // 3: geecache.CacheService.Invalidate:input_type -> geecache.InvalidateRequest
+	3, // 4: geecache.CacheService.Purge:input_type -> geecache.InvalidateRequest
+	1, // 5: geecache.CacheService.Test:output_type -> geecache.Response
+	1, // 6: geecache.CacheService.Get:output_type -> geecache.Response
+	4, // 7: geecache.CacheService.Set:output_type -> geecache.Empty
+	4, // 8: geecache.CacheService.Invalidate:output_type -> geecache.Empty
+	4, // 9: geecache.CacheService.Purge:output_type -> geecache.Empty
+	5, // [5:10] is the sub-list for method output_type
+	0, // [0:5] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name

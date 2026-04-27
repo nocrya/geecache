@@ -1,7 +1,7 @@
 package lru
 
-// CacheStore is a byte-bounded in-memory cache with Get / Add / Remove.
-// LRU (*Cache) and LFU (*LFU) satisfy it; geecache.Group uses it for main/hot tiers.
+// CacheStore 为按字节上限的内存缓存抽象（Get / Add / Remove）。
+// *Cache（LRU）、*LFU、*ARC 均实现本接口；geecache.Group 的 main/hot 使用。
 type CacheStore interface {
 	Get(key string) (Value, bool)
 	Add(key string, value Value)

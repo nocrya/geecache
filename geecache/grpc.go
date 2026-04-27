@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	pb "geecache/pb"
+	"log"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -25,6 +26,7 @@ func NewGRPCServer() *grpc.Server {
 }
 
 func (s *GRPCServer) Get(ctx context.Context, in *pb.Request) (*pb.Response, error) {
+	log.Println("GRPCServer Get", in)
 	if in == nil {
 		return nil, status.Error(codes.InvalidArgument, "nil request")
 	}

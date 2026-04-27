@@ -61,7 +61,7 @@ func (f GetterFunc) Get(key string) ([]byte, error) {
 }
 
 // NewGroup 创建一个组。hotBytes<=0 时不创建热点层，peer 命中会写入 mainCache。
-// eviction: "lru"（默认）或 "lfu"，控制 main/hot 淘汰策略（见 lru.CacheStore）。
+// eviction: "lru"（默认）、"lfu" 或 "arc"，控制 main/hot 淘汰策略（见 lru.CacheStore）。
 // ttl<=0 时不为条目设置过期；ttl>0 时 main/hot 中条目在 Get 时做惰性淘汰。
 // ttlJitter>0 时实际过期时间为 ttl + uniform(0, ttlJitter)；为 0 则每条目固定 ttl。
 // negTTL>0 时对 Getter 返回的 ErrNotFound 做空值缓存（Get 短路）；bloomN>0 时额外用布隆记录未命中并在轮换周期内短路 Getter（有假阳性，见 bloomRotate）。
@@ -386,6 +386,11 @@ func buildCacheStores(eviction string, cacheBytes, hotBytes int64, onMain, onHot
 		main = lru.NewLFU(cacheBytes, onMain)
 		if hotBytes > 0 {
 			hot = lru.NewLFU(hotBytes, onHot)
+		}
+	case "arc", "ARC":
+		main = lru.NewARC(cacheBytes, onMain)
+		if hotBytes > 0 {
+			hot = lru.NewARC(hotBytes, onHot)
 		}
 	default:
 		main = lru.New(cacheBytes, onMain)

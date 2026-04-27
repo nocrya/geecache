@@ -19,6 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	CacheService_Test_FullMethodName       = "/geecache.CacheService/Test"
 	CacheService_Get_FullMethodName        = "/geecache.CacheService/Get"
 	CacheService_Set_FullMethodName        = "/geecache.CacheService/Set"
 	CacheService_Invalidate_FullMethodName = "/geecache.CacheService/Invalidate"
@@ -31,6 +32,8 @@ const (
 //
 // gRPC 服务
 type CacheServiceClient interface {
+	// 测试
+	Test(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error)
 	Get(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error)
 	// 在归属节点写入并失效其它节点副本
 	Set(ctx context.Context, in *SetRequest, opts ...grpc.CallOption) (*Empty, error)
@@ -46,6 +49,16 @@ type cacheServiceClient struct {
 
 func NewCacheServiceClient(cc grpc.ClientConnInterface) CacheServiceClient {
 	return &cacheServiceClient{cc}
+}
+
+func (c *cacheServiceClient) Test(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Response)
+	err := c.cc.Invoke(ctx, CacheService_Test_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *cacheServiceClient) Get(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error) {
@@ -94,6 +107,8 @@ func (c *cacheServiceClient) Purge(ctx context.Context, in *InvalidateRequest, o
 //
 // gRPC 服务
 type CacheServiceServer interface {
+	// 测试
+	Test(context.Context, *Request) (*Response, error)
 	Get(context.Context, *Request) (*Response, error)
 	// 在归属节点写入并失效其它节点副本
 	Set(context.Context, *SetRequest) (*Empty, error)
@@ -111,6 +126,9 @@ type CacheServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedCacheServiceServer struct{}
 
+func (UnimplementedCacheServiceServer) Test(context.Context, *Request) (*Response, error) {
+	return nil, status.Error(codes.Unimplemented, "method Test not implemented")
+}
 func (UnimplementedCacheServiceServer) Get(context.Context, *Request) (*Response, error) {
 	return nil, status.Error(codes.Unimplemented, "method Get not implemented")
 }
@@ -142,6 +160,24 @@ func RegisterCacheServiceServer(s grpc.ServiceRegistrar, srv CacheServiceServer)
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&CacheService_ServiceDesc, srv)
+}
+
+func _CacheService_Test_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Request)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CacheServiceServer).Test(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CacheService_Test_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CacheServiceServer).Test(ctx, req.(*Request))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _CacheService_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -223,6 +259,10 @@ var CacheService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "geecache.CacheService",
 	HandlerType: (*CacheServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Test",
+			Handler:    _CacheService_Test_Handler,
+		},
 		{
 			MethodName: "Get",
 			Handler:    _CacheService_Get_Handler,

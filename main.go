@@ -13,6 +13,8 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -20,12 +22,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
 )
-
-var db = map[string]string{
-	"Tom":  "630",
-	"Jack": "589",
-	"Sam":  "567",
-}
 
 func main() {
 	var port int
@@ -42,8 +38,12 @@ func main() {
 	var persistPath string
 	var warmOnStart bool
 	var warmKeys string
+	var peersCSV string
+	var backingDir string
 
 	flag.IntVar(&port, "port", 8001, "geecache server port")
+	flag.StringVar(&peersCSV, "peers", "http://localhost:8001,http://localhost:8002,http://localhost:8003", "when use-etcd=false: comma-separated peer base URLs (must include self)")
+	flag.StringVar(&backingDir, "backing-dir", "", "Getter reads one file per key from this directory; empty uses ./data/<port>/backing/")
 	flag.StringVar(&etcdAddrs, "etcd", "http://localhost:2379", "etcd endpoints (comma-separated)")
 	flag.BoolVar(&useEtcd, "use-etcd", true, "use etcd for service discovery")
 	flag.BoolVar(&useGRPC, "use-grpc", true, "use grpc for communication")
@@ -52,16 +52,24 @@ func main() {
 	flag.DurationVar(&negTTL, "neg-ttl", 0, "TTL for negative cache of ErrNotFound from getter (0 = off)")
 	flag.IntVar(&bloomN, "bloom-n", 0, "Bloom filter estimated keys for miss-set (0 = off)")
 	flag.Float64Var(&bloomFP, "bloom-fp", 0.01, "Bloom false-positive rate when bloom-n > 0")
-	flag.StringVar(&eviction, "eviction", "lru", "main/hot eviction policy: lru | lfu")
+	flag.StringVar(&eviction, "eviction", "lru", "main/hot eviction policy: lru | lfu | arc")
 	flag.BoolVar(&etcdInval, "etcd-inval", true, "when use-etcd, publish/listen cache invalidations on etcd (phase 4)")
 	flag.StringVar(&persistPath, "persist-path", "", "BoltDB file path for cold cache (empty=off)")
-	flag.BoolVar(&warmOnStart, "warm", true, "when persist-path set, load bolt entries into main on startup")
+	flag.BoolVar(&warmOnStart, "warm", false, "when persist-path set, load bolt entries into main on startup")
 	flag.StringVar(&warmKeys, "warm-keys", "", "comma-separated keys to load via Getter after startup (preheat from backing store)")
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})))
+
+	bd := backingDir
+	if bd == "" {
+		bd = filepath.Join("data", strconv.Itoa(port), "backing")
+	}
+	if err := os.MkdirAll(bd, 0o755); err != nil {
+		log.Fatalf("[GeeCache] backing-dir mkdir: %v", err)
+	}
 
 	listenAddr := fmt.Sprintf(":%d", port)
 	selfAddr := fmt.Sprintf("http://localhost:%d", port)
@@ -85,10 +93,18 @@ func main() {
 			}
 		}
 	} else {
-		// 如果不使用 etcd，使用硬编码的 peers
-		peers := []string{"http://localhost:8001", "http://localhost:8002", "http://localhost:8003"}
+		var peers []string
+		for _, s := range strings.Split(peersCSV, ",") {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				peers = append(peers, s)
+			}
+		}
+		if len(peers) == 0 {
+			log.Fatal("[GeeCache] use-etcd=false requires at least one URL in -peers")
+		}
 		pool.AddPeers(peers...)
-		log.Printf("[GeeCache] Using hardcoded peers: %v", peers)
+		log.Printf("[GeeCache] static peers from -peers: %v", peers)
 	}
 
 	var boltStore *geecache.BoltStore
@@ -101,14 +117,7 @@ func main() {
 		log.Printf("[GeeCache] Bolt persist enabled: %s", persistPath)
 	}
 
-	scores := geecache.NewGroup("scores", 2<<10, 2<<10, eviction, cacheTTL, cacheTTLJitter, negTTL, bloomN, bloomFP, geecache.GetterFunc(
-		func(key string) ([]byte, error) {
-			log.Println("[SlowDB] search key", key)
-			if v, ok := db[key]; ok {
-				return []byte(v), nil
-			}
-			return nil, fmt.Errorf("%w: %s", geecache.ErrNotFound, key)
-		}), pool, boltStore, warmOnStart && persistPath != "")
+	scores := geecache.NewGroup("scores", 2<<10, 2<<10, eviction, cacheTTL, cacheTTLJitter, negTTL, bloomN, bloomFP, newBackingFileGetter(bd), pool, boltStore, warmOnStart && persistPath != "")
 
 	if warmKeys != "" {
 		for _, k := range strings.Split(warmKeys, ",") {
@@ -209,4 +218,39 @@ func main() {
 		log.Printf("[GeeCache] cmux: %v", err)
 	}
 	log.Println("[GeeCache] bye")
+}
+
+// newBackingFileGetter 从目录按「文件名 = key」读字节；不存在则 ErrNotFound（可走负缓存）。
+// key 不允许含路径分隔符或 ".."，避免逃出 backing 目录。
+func newBackingFileGetter(dir string) geecache.GetterFunc {
+	return func(key string) ([]byte, error) {
+		slog.Info("getter_backing_file", "key", key, "dir", dir)
+		name, err := safeBackingKeyFile(key)
+		if err != nil {
+			return nil, err
+		}
+		path := filepath.Join(dir, name)
+		b, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, fmt.Errorf("%w: %s", geecache.ErrNotFound, key)
+			}
+			return nil, fmt.Errorf("read backing %q: %w", path, err)
+		}
+		return b, nil
+	}
+}
+
+func safeBackingKeyFile(key string) (string, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", fmt.Errorf("%w", geecache.ErrNotFound)
+	}
+	if strings.Contains(key, "..") || strings.ContainsAny(key, `/\:`) {
+		return "", fmt.Errorf("%w: invalid key %q", geecache.ErrNotFound, key)
+	}
+	if filepath.Base(key) != key {
+		return "", fmt.Errorf("%w: invalid key %q", geecache.ErrNotFound, key)
+	}
+	return key, nil
 }
