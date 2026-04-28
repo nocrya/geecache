@@ -48,24 +48,28 @@ type Group struct {
 	persist *BoltStore
 }
 
-// Getter 接口：定义了如何从数据源加载数据
+// Getter 定义缓存未命中且不走 peer（或 peer 失败）时，如何从本地数据源按 key 加载字节。
 type Getter interface {
+	// Get 加载成功返回数据；不存在等业务语义应使用 ErrNotFound 包装返回以便负缓存与布隆逻辑生效。
 	Get(key string) ([]byte, error)
 }
 
-// GetterFunc 函数类型实现 Getter 接口
+// GetterFunc 将普通函数适配为 Getter，便于用闭包或包级函数作为数据源。
 type GetterFunc func(key string) ([]byte, error)
 
+// Get 将一次缓存未命中时的回源调用转发给底层函数类型本身。
 func (f GetterFunc) Get(key string) ([]byte, error) {
 	return f(key)
 }
 
-// NewGroup 创建一个组。hotBytes<=0 时不创建热点层，peer 命中会写入 mainCache。
-// eviction: "lru"（默认）、"lfu" 或 "arc"，控制 main/hot 淘汰策略（见 lru.CacheStore）。
-// ttl<=0 时不为条目设置过期；ttl>0 时 main/hot 中条目在 Get 时做惰性淘汰。
-// ttlJitter>0 时实际过期时间为 ttl + uniform(0, ttlJitter)；为 0 则每条目固定 ttl。
-// negTTL>0 时对 Getter 返回的 ErrNotFound 做空值缓存（Get 短路）；bloomN>0 时额外用布隆记录未命中并在轮换周期内短路 Getter（有假阳性，见 bloomRotate）。
-// persist 非 nil 时启用 Bolt 冷存储；warm 为 true 时在注册进 Groups 前从 Bolt 预热 main。
+// NewGroup 创建并注册一个缓存组（namespace），同一进程内通过 name 在全局 Groups 中唯一。
+//
+// hotBytes<=0 时不创建热点层，此时从 peer 拉取到的数据会直接写入 mainCache。
+// eviction 取 "lru"（默认）、"lfu" 或 "arc"，分别对应 main/hot 的淘汰策略（见 lru.CacheStore）。
+// ttl<=0 时不为条目设置过期；ttl>0 时 main/hot 条目在 Get 时按 until 做惰性淘汰。
+// ttlJitter>0 时单条 TTL 为 ttl + uniform(0, ttlJitter)；为 0 时每条固定 ttl。
+// negTTL>0 时对 Getter 返回的 ErrNotFound 做负缓存（Get 在有效期内直接 ErrNotFound）；bloomN>0 时额外用布隆记录未命中并在 bloomRotate 周期轮换，存在假阳性短路 Getter 的可能。
+// persist 非 nil 时启用 Bolt：淘汰落盘、Set/Get 成功写盘、Invalidate/Purge 删键；warm 为 true 时在写入 Groups 之前把 Bolt 中该组数据预热进 main。
 func NewGroup(name string, cacheBytes int64, hotBytes int64, eviction string, ttl, ttlJitter, negTTL time.Duration, bloomN int, bloomFP float64, getter Getter, peers PeerPicker, persist *BoltStore, warm bool) *Group {
 	if getter == nil {
 		panic("nil Getter")
@@ -131,6 +135,7 @@ func NewGroup(name string, cacheBytes int64, hotBytes int64, eviction string, tt
 	return g
 }
 
+// valueToPersistBytes 从 LRU 中存取的 Value 提取可写入 Bolt 的字节；nil 或非 ByteView/ttlEntry 返回 nil。
 func valueToPersistBytes(v lru.Value) []byte {
 	if v == nil {
 		return nil
@@ -145,6 +150,7 @@ func valueToPersistBytes(v lru.Value) []byte {
 	}
 }
 
+// warmFromBolt 遍历 Bolt 中本组键值并写入 mainCache，返回加载条数；persist 为 nil 时返回 (0, nil)。
 func (g *Group) warmFromBolt() (int, error) {
 	if g.persist == nil {
 		return 0, nil
@@ -158,6 +164,7 @@ func (g *Group) warmFromBolt() (int, error) {
 	return n, err
 }
 
+// persistPutView 在 persist 开启时把 key 对应 ByteView 写入 Bolt（失败仅打日志）。
 func (g *Group) persistPutView(key string, v ByteView) {
 	if g.persist == nil {
 		return
@@ -167,6 +174,7 @@ func (g *Group) persistPutView(key string, v ByteView) {
 	}
 }
 
+// persistDeleteKey 在 persist 开启时从 Bolt 删除本组 key（失败仅打日志）。
 func (g *Group) persistDeleteKey(key string) {
 	if g.persist == nil {
 		return
@@ -176,7 +184,7 @@ func (g *Group) persistDeleteKey(key string) {
 	}
 }
 
-// GetGroup 根据名字获取组
+// GetGroup 根据组名从全局 Groups 中查找已注册的 *Group；不存在时返回 nil。
 func GetGroup(name string) *Group {
 	mu.RLock()
 	g := Groups[name]
@@ -184,7 +192,7 @@ func GetGroup(name string) *Group {
 	return g
 }
 
-// Get 核心方法：查找数据
+// Get 按 key 读取缓存：依次查 main、hot、负缓存（与布隆短路）；未命中则进入 load（peer → Getter），命中返回 ByteView。
 func (g *Group) Get(key string) (ByteView, error) {
 	if key == "" {
 		return ByteView{}, fmt.Errorf("key is required")
@@ -215,7 +223,8 @@ func (g *Group) Get(key string) (ByteView, error) {
 	return g.load(key)
 }
 
-// load 负责真正的“回源”操作：从远程节点或数据源获取数据
+// load 在 singleflight 合并同 key 的并发回源：先 PickPeer 并 getFromPeer；失败则 maybeRotateMissBloom、布隆未命中拦截后 getLocally，
+// 成功则写入 main（及 persist）、无 hot 时 peer 命中也会进 main；peer 命中且存在 hotCache 时写入 hot。
 func (g *Group) load(key string) (ByteView, error) {
 	// 使用 singleflight 防止缓存击穿
 	value, err := g.singleFlight.Do(key, func() (interface{}, error) {
@@ -270,8 +279,8 @@ func (g *Group) load(key string) (ByteView, error) {
 
 }
 
-// Set 写入缓存：非归属节点会转发到 owner；owner 写本地 main 并向其它节点广播 Invalidate。
-// 不写穿 Getter / DB（演示层缓存）。
+// Set 写入缓存：若 peers 实现 PeerWriter 且本机不是该 key 的 owner，则 ForwardSet 到归属节点；
+// owner 路径为 setLocalAndBroadcast。不调用 Getter、不写穿底层 DB（仅内存/Bolt 缓存语义）。
 func (g *Group) Set(key string, value []byte) error {
 	if key == "" {
 		return fmt.Errorf("key is required")
@@ -282,7 +291,7 @@ func (g *Group) Set(key string, value []byte) error {
 	return g.setLocalAndBroadcast(key, value)
 }
 
-// PurgeKey 删除本机该 key 并向其它节点发 Invalidate（仅删缓存）。非 owner 会转发到 owner。
+// PurgeKey 删除缓存：非 owner 时 ForwardPurge 到归属节点；owner 时先 InvalidateLocal 再 BroadcastInvalidate，仅删缓存、不删 Getter 侧数据。
 func (g *Group) PurgeKey(key string) error {
 	if key == "" {
 		return fmt.Errorf("key is required")
@@ -302,7 +311,7 @@ func (g *Group) PurgeKey(key string) error {
 	return nil
 }
 
-// InvalidateLocal 仅删除本机 main/hot 与负缓存、布隆中与 key 相关状态；不广播。
+// InvalidateLocal 仅清理本机：negUntil、布隆、main/hot 中的 key 及 Bolt 中对应条目；不向其它节点发消息。
 func (g *Group) InvalidateLocal(key string) error {
 	if key == "" {
 		return fmt.Errorf("key is required")
@@ -322,6 +331,7 @@ func (g *Group) InvalidateLocal(key string) error {
 	return nil
 }
 
+// setLocalAndBroadcast 在「本机为 owner」路径下：清负缓存与布隆、写入 main 与 Bolt、从 hot 去掉该 key，并向其它节点 BroadcastInvalidate。
 func (g *Group) setLocalAndBroadcast(key string, value []byte) error {
 	view := NewByteView(value)
 	g.negMu.Lock()
@@ -342,6 +352,7 @@ func (g *Group) setLocalAndBroadcast(key string, value []byte) error {
 	return nil
 }
 
+// resetMissBloom 在 missBloom 启用时整体重置布隆过滤器并刷新 missBloomStart（例如 InvalidateLocal 后避免陈旧假阳性）。
 func (g *Group) resetMissBloom() {
 	if g.missBloom == nil || g.bloomN <= 0 {
 		return
@@ -352,7 +363,7 @@ func (g *Group) resetMissBloom() {
 	g.missBloomMu.Unlock()
 }
 
-// getFromPeer 从远程节点获取数据
+// getFromPeer 通过 PeerGetter（HTTP 或 gRPC）拉取远端 group/key 的字节；记录延迟与 metrics，失败返回错误由上层决定是否走 Getter。
 func (g *Group) getFromPeer(peer PeerGetter, group string, key string) (ByteView, error) {
 	start := time.Now()
 	bytes, err := peer.Get(group, key)
@@ -368,7 +379,7 @@ func (g *Group) getFromPeer(peer PeerGetter, group string, key string) (ByteView
 	return NewByteView(bytes), nil
 }
 
-// getLocally 从本地数据源获取
+// getLocally 调用本组 Getter（如文件/DB）加载 key；不写入缓存，由 load 在成功后 putTier。
 func (g *Group) getLocally(key string) (ByteView, error) {
 	bytes, err := g.getter.Get(key)
 	if err != nil {
@@ -380,6 +391,7 @@ func (g *Group) getLocally(key string) (ByteView, error) {
 	return NewByteView(bytes), nil
 }
 
+// buildCacheStores 按 eviction 策略构造 main（必选）与 hot（仅当 hotBytes>0）两层 CacheStore，并挂上淘汰回调 onMain/onHot。
 func buildCacheStores(eviction string, cacheBytes, hotBytes int64, onMain, onHot func(string, lru.Value)) (main lru.CacheStore, hot lru.CacheStore) {
 	switch eviction {
 	case "lfu", "LFU":
@@ -401,6 +413,7 @@ func buildCacheStores(eviction string, cacheBytes, hotBytes int64, onMain, onHot
 	return main, hot
 }
 
+// peekTier 从指定层读取 key：无 TTL 时直接断言 ByteView；有 TTL 时解 ttlEntry，过期则 Remove 并删 persist，返回未命中。
 func (g *Group) peekTier(c lru.CacheStore, key string) (ByteView, bool) {
 	if c == nil {
 		return ByteView{}, false
@@ -422,6 +435,7 @@ func (g *Group) peekTier(c lru.CacheStore, key string) (ByteView, bool) {
 	return e.view, true
 }
 
+// putTier 向指定层写入 view：g.ttl>0 时包一层 ttlEntry（until 由 cacheTTLWithJitter）；否则直接存 ByteView。
 func (g *Group) putTier(c lru.CacheStore, key string, view ByteView) {
 	if c == nil {
 		return
@@ -433,7 +447,7 @@ func (g *Group) putTier(c lru.CacheStore, key string, view ByteView) {
 	c.Add(key, view)
 }
 
-// cacheTTLWithJitter returns ttl + uniform[0, ttlJitter]; ttlJitter<=0 returns ttl.
+// cacheTTLWithJitter 计算单条缓存过期时长：在 ttl 基础上加 [0, ttlJitter] 上均匀随机；ttl<=0 返回 0；ttlJitter<=0 返回固定 ttl。
 func (g *Group) cacheTTLWithJitter() time.Duration {
 	if g.ttl <= 0 {
 		return 0
@@ -444,6 +458,7 @@ func (g *Group) cacheTTLWithJitter() time.Duration {
 	return g.ttl + time.Duration(rand.Int63n(int64(g.ttlJitter)+1))
 }
 
+// peekNegative 判断 key 是否在负缓存有效期内；过期则删除 negUntil 记录并视为未命中。negTTL 未启用时恒为 false。
 func (g *Group) peekNegative(key string) bool {
 	if g.negTTL <= 0 {
 		return false
@@ -462,6 +477,7 @@ func (g *Group) peekNegative(key string) bool {
 	return true
 }
 
+// recordNotFound 在 Getter 返回 ErrNotFound 时调用：记穿透指标，可选写入 negUntil，并在布隆开启时 AddString(key)。
 func (g *Group) recordNotFound(key string) {
 	metrics.PenetrationMissRecorded.WithLabelValues(g.name).Inc()
 	if g.negTTL > 0 {
@@ -476,6 +492,7 @@ func (g *Group) recordNotFound(key string) {
 	}
 }
 
+// maybeRotateMissBloom 若距上次轮换已超过 bloomRotate，则重建布隆并更新 missBloomStart，降低长期假阳性对 Getter 的误伤。
 func (g *Group) maybeRotateMissBloom() {
 	if g.missBloom == nil || g.bloomRotate <= 0 {
 		return

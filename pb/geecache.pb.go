@@ -21,6 +21,94 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type TestRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Testreq       string                 `protobuf:"bytes,1,opt,name=testreq,proto3" json:"testreq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TestRequest) Reset() {
+	*x = TestRequest{}
+	mi := &file_geecache_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TestRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TestRequest) ProtoMessage() {}
+
+func (x *TestRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_geecache_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TestRequest.ProtoReflect.Descriptor instead.
+func (*TestRequest) Descriptor() ([]byte, []int) {
+	return file_geecache_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *TestRequest) GetTestreq() string {
+	if x != nil {
+		return x.Testreq
+	}
+	return ""
+}
+
+type TestResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Testrsp       string                 `protobuf:"bytes,1,opt,name=testrsp,proto3" json:"testrsp,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TestResponse) Reset() {
+	*x = TestResponse{}
+	mi := &file_geecache_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TestResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TestResponse) ProtoMessage() {}
+
+func (x *TestResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_geecache_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TestResponse.ProtoReflect.Descriptor instead.
+func (*TestResponse) Descriptor() ([]byte, []int) {
+	return file_geecache_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *TestResponse) GetTestrsp() string {
+	if x != nil {
+		return x.Testrsp
+	}
+	return ""
+}
+
 // 请求结构
 type Request struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -32,7 +120,7 @@ type Request struct {
 
 func (x *Request) Reset() {
 	*x = Request{}
-	mi := &file_geecache_proto_msgTypes[0]
+	mi := &file_geecache_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -44,7 +132,7 @@ func (x *Request) String() string {
 func (*Request) ProtoMessage() {}
 
 func (x *Request) ProtoReflect() protoreflect.Message {
-	mi := &file_geecache_proto_msgTypes[0]
+	mi := &file_geecache_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -57,7 +145,7 @@ func (x *Request) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Request.ProtoReflect.Descriptor instead.
 func (*Request) Descriptor() ([]byte, []int) {
-	return file_geecache_proto_rawDescGZIP(), []int{0}
+	return file_geecache_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Request) GetGroup() string {
@@ -84,7 +172,7 @@ type Response struct {
 
 func (x *Response) Reset() {
 	*x = Response{}
-	mi := &file_geecache_proto_msgTypes[1]
+	mi := &file_geecache_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -96,7 +184,7 @@ func (x *Response) String() string {
 func (*Response) ProtoMessage() {}
 
 func (x *Response) ProtoReflect() protoreflect.Message {
-	mi := &file_geecache_proto_msgTypes[1]
+	mi := &file_geecache_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -109,7 +197,7 @@ func (x *Response) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Response.ProtoReflect.Descriptor instead.
 func (*Response) Descriptor() ([]byte, []int) {
-	return file_geecache_proto_rawDescGZIP(), []int{1}
+	return file_geecache_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Response) GetValue() []byte {
@@ -130,7 +218,7 @@ type SetRequest struct {
 
 func (x *SetRequest) Reset() {
 	*x = SetRequest{}
-	mi := &file_geecache_proto_msgTypes[2]
+	mi := &file_geecache_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -142,7 +230,7 @@ func (x *SetRequest) String() string {
 func (*SetRequest) ProtoMessage() {}
 
 func (x *SetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_geecache_proto_msgTypes[2]
+	mi := &file_geecache_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -155,7 +243,7 @@ func (x *SetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetRequest.ProtoReflect.Descriptor instead.
 func (*SetRequest) Descriptor() ([]byte, []int) {
-	return file_geecache_proto_rawDescGZIP(), []int{2}
+	return file_geecache_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *SetRequest) GetGroup() string {
@@ -189,7 +277,7 @@ type InvalidateRequest struct {
 
 func (x *InvalidateRequest) Reset() {
 	*x = InvalidateRequest{}
-	mi := &file_geecache_proto_msgTypes[3]
+	mi := &file_geecache_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -201,7 +289,7 @@ func (x *InvalidateRequest) String() string {
 func (*InvalidateRequest) ProtoMessage() {}
 
 func (x *InvalidateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_geecache_proto_msgTypes[3]
+	mi := &file_geecache_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -214,7 +302,7 @@ func (x *InvalidateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InvalidateRequest.ProtoReflect.Descriptor instead.
 func (*InvalidateRequest) Descriptor() ([]byte, []int) {
-	return file_geecache_proto_rawDescGZIP(), []int{3}
+	return file_geecache_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *InvalidateRequest) GetGroup() string {
@@ -239,7 +327,7 @@ type Empty struct {
 
 func (x *Empty) Reset() {
 	*x = Empty{}
-	mi := &file_geecache_proto_msgTypes[4]
+	mi := &file_geecache_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -251,7 +339,7 @@ func (x *Empty) String() string {
 func (*Empty) ProtoMessage() {}
 
 func (x *Empty) ProtoReflect() protoreflect.Message {
-	mi := &file_geecache_proto_msgTypes[4]
+	mi := &file_geecache_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -264,14 +352,18 @@ func (x *Empty) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Empty.ProtoReflect.Descriptor instead.
 func (*Empty) Descriptor() ([]byte, []int) {
-	return file_geecache_proto_rawDescGZIP(), []int{4}
+	return file_geecache_proto_rawDescGZIP(), []int{6}
 }
 
 var File_geecache_proto protoreflect.FileDescriptor
 
 const file_geecache_proto_rawDesc = "" +
 	"\n" +
-	"\x0egeecache.proto\x12\bgeecache\"1\n" +
+	"\x0egeecache.proto\x12\bgeecache\"'\n" +
+	"\vTestRequest\x12\x18\n" +
+	"\atestreq\x18\x01 \x01(\tR\atestreq\"(\n" +
+	"\fTestResponse\x12\x18\n" +
+	"\atestrsp\x18\x01 \x01(\tR\atestrsp\"1\n" +
 	"\aRequest\x12\x14\n" +
 	"\x05group\x18\x01 \x01(\tR\x05group\x12\x10\n" +
 	"\x03key\x18\x02 \x01(\tR\x03key\" \n" +
@@ -285,9 +377,9 @@ const file_geecache_proto_rawDesc = "" +
 	"\x11InvalidateRequest\x12\x14\n" +
 	"\x05group\x18\x01 \x01(\tR\x05group\x12\x10\n" +
 	"\x03key\x18\x02 \x01(\tR\x03key\"\a\n" +
-	"\x05Empty2\x8c\x02\n" +
-	"\fCacheService\x12-\n" +
-	"\x04Test\x12\x11.geecache.Request\x1a\x12.geecache.Response\x12,\n" +
+	"\x05Empty2\x94\x02\n" +
+	"\fCacheService\x125\n" +
+	"\x04Test\x12\x15.geecache.TestRequest\x1a\x16.geecache.TestResponse\x12,\n" +
 	"\x03Get\x12\x11.geecache.Request\x1a\x12.geecache.Response\x12,\n" +
 	"\x03Set\x12\x14.geecache.SetRequest\x1a\x0f.geecache.Empty\x12:\n" +
 	"\n" +
@@ -306,25 +398,27 @@ func file_geecache_proto_rawDescGZIP() []byte {
 	return file_geecache_proto_rawDescData
 }
 
-var file_geecache_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_geecache_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_geecache_proto_goTypes = []any{
-	(*Request)(nil),           // 0: geecache.Request
-	(*Response)(nil),          // 1: geecache.Response
-	(*SetRequest)(nil),        // 2: geecache.SetRequest
-	(*InvalidateRequest)(nil), // 3: geecache.InvalidateRequest
-	(*Empty)(nil),             // 4: geecache.Empty
+	(*TestRequest)(nil),       // 0: geecache.TestRequest
+	(*TestResponse)(nil),      // 1: geecache.TestResponse
+	(*Request)(nil),           // 2: geecache.Request
+	(*Response)(nil),          // 3: geecache.Response
+	(*SetRequest)(nil),        // 4: geecache.SetRequest
+	(*InvalidateRequest)(nil), // 5: geecache.InvalidateRequest
+	(*Empty)(nil),             // 6: geecache.Empty
 }
 var file_geecache_proto_depIdxs = []int32{
-	0, // 0: geecache.CacheService.Test:input_type -> geecache.Request
-	0, // 1: geecache.CacheService.Get:input_type -> geecache.Request
-	2, // 2: geecache.CacheService.Set:input_type -> geecache.SetRequest
-	3, // 3: geecache.CacheService.Invalidate:input_type -> geecache.InvalidateRequest
-	3, // 4: geecache.CacheService.Purge:input_type -> geecache.InvalidateRequest
-	1, // 5: geecache.CacheService.Test:output_type -> geecache.Response
-	1, // 6: geecache.CacheService.Get:output_type -> geecache.Response
-	4, // 7: geecache.CacheService.Set:output_type -> geecache.Empty
-	4, // 8: geecache.CacheService.Invalidate:output_type -> geecache.Empty
-	4, // 9: geecache.CacheService.Purge:output_type -> geecache.Empty
+	0, // 0: geecache.CacheService.Test:input_type -> geecache.TestRequest
+	2, // 1: geecache.CacheService.Get:input_type -> geecache.Request
+	4, // 2: geecache.CacheService.Set:input_type -> geecache.SetRequest
+	5, // 3: geecache.CacheService.Invalidate:input_type -> geecache.InvalidateRequest
+	5, // 4: geecache.CacheService.Purge:input_type -> geecache.InvalidateRequest
+	1, // 5: geecache.CacheService.Test:output_type -> geecache.TestResponse
+	3, // 6: geecache.CacheService.Get:output_type -> geecache.Response
+	6, // 7: geecache.CacheService.Set:output_type -> geecache.Empty
+	6, // 8: geecache.CacheService.Invalidate:output_type -> geecache.Empty
+	6, // 9: geecache.CacheService.Purge:output_type -> geecache.Empty
 	5, // [5:10] is the sub-list for method output_type
 	0, // [0:5] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
@@ -343,7 +437,7 @@ func file_geecache_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_geecache_proto_rawDesc), len(file_geecache_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

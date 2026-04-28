@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	pb "geecache/pb"
-	"log"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 )
@@ -16,9 +16,17 @@ type GRPCServer struct {
 	pb.UnimplementedCacheServiceServer
 }
 
-func NewGRPCServer() *grpc.Server {
-
-	grpcServer := grpc.NewServer()
+// NewGRPCServer 创建 gRPC 服务。transportCreds 非 nil（例如 credentials.NewTLS）时启用对应传输层凭据；
+// 为 nil 时接受明文 h2c，与 cmux 下未再套 TLS 的 gRPC 分支一致。
+func NewGRPCServer(peerAuthToken string, transportCreds credentials.TransportCredentials) *grpc.Server {
+	opts := []grpc.ServerOption{}
+	if transportCreds != nil {
+		opts = append(opts, grpc.Creds(transportCreds))
+	}
+	if peerAuthToken != "" {
+		opts = append(opts, grpc.ChainUnaryInterceptor(unaryPeerAuthInterceptor(peerAuthToken)))
+	}
+	grpcServer := grpc.NewServer(opts...)
 	pb.RegisterCacheServiceServer(grpcServer, &GRPCServer{})
 	reflection.Register(grpcServer)
 
@@ -26,7 +34,6 @@ func NewGRPCServer() *grpc.Server {
 }
 
 func (s *GRPCServer) Get(ctx context.Context, in *pb.Request) (*pb.Response, error) {
-	log.Println("GRPCServer Get", in)
 	if in == nil {
 		return nil, status.Error(codes.InvalidArgument, "nil request")
 	}

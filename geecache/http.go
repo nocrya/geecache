@@ -3,6 +3,7 @@ package geecache
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +17,7 @@ import (
 	"geecache/registry"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"google.golang.org/grpc/credentials"
 )
 
 const maxSetBodyBytes = 32 << 20 // 32MiB
@@ -52,6 +54,13 @@ type HTTPPool struct {
 	invalPrefix string
 	invalCtx    context.Context
 	invalCancel context.CancelFunc
+
+	// peerAuthToken 非空时：ServeHTTP 要求 X-Geecache-Peer-Token；与 peer 的 HTTP/gRPC 客户端携带相同值（节点身份，非终端用户 JWT）。
+	peerAuthToken string
+
+	// peerClientTLS 非 nil 时：对 peer 的 HTTP 使用 https + 客户端证书；gRPC 使用 credentials.NewTLS(克隆)。
+	// 须在首次 Set/AddPeers（含 RegisterWithEtcd 内的 Set）之前通过 SetPeerClientTLS 配置；peer URL 须为 https://。
+	peerClientTLS *tls.Config
 }
 
 var DefaultPool *HTTPPool
@@ -65,13 +74,30 @@ func NewHTTPPool(self string, peers ...string) *HTTPPool {
 		useGRPC:     false,
 	}
 
-	DefaultPool.AddPeers(peers...)
+	_ = DefaultPool.AddPeers(peers...)
 	return DefaultPool
 }
 
 // SetRegistry 设置 etcd 注册中心
 func (p *HTTPPool) SetRegistry(reg *registry.EtcdRegistry) {
 	p.registry = reg
+}
+
+// SetPeerAuthToken 设置节点间共享密钥（节点身份，非终端用户 JWT）。
+// 非空时：本机 ServeHTTP 对 /geecache 下请求要求 HTTP 头 PeerAuthHTTPHeader；与 peer 的 gRPC 在 metadata 键 x-geecache-peer-token 携带相同值（含 reflection）。
+// 须在首次 Set/AddPeers（含 RegisterWithEtcd 内的 Set）之前调用，否则已创建的 peer 客户端不会带上该 token。
+func (p *HTTPPool) SetPeerAuthToken(token string) {
+	p.mu.Lock()
+	p.peerAuthToken = token
+	p.mu.Unlock()
+}
+
+// SetPeerClientTLS 设置节点间出站 TLS（校验对端服务证书并出示本节点客户端证书）。
+// 非 nil 时 peer 地址必须为 https://。须与 SetPeerAuthToken 一样在首次 AddPeers / RegisterWithEtcd 之前调用。
+func (p *HTTPPool) SetPeerClientTLS(cfg *tls.Config) {
+	p.mu.Lock()
+	p.peerClientTLS = cfg
+	p.mu.Unlock()
 }
 
 // RegisterWithEtcd 注册当前节点到 etcd，并监听其他节点变化
@@ -94,7 +120,9 @@ func (p *HTTPPool) RegisterWithEtcd(etcdEndpoints []string, ttl int64) error {
 		return err
 	}
 	log.Printf("[HTTPPool] Initial peers from etcd: %v", services)
-	p.Set(services...)
+	if err := p.Set(services...); err != nil {
+		return err
+	}
 
 	// 4. 监听节点变化
 	reg.Watch(prefix, func(events []*clientv3.Event) {
@@ -103,7 +131,9 @@ func (p *HTTPPool) RegisterWithEtcd(etcdEndpoints []string, ttl int64) error {
 			case clientv3.EventTypePut:
 				peer := string(ev.Kv.Value)
 				log.Printf("[HTTPPool] Peer added: %s", peer)
-				p.AddPeers(peer)
+				if err := p.AddPeers(peer); err != nil {
+					log.Printf("[HTTPPool] AddPeers: %v", err)
+				}
 			case clientv3.EventTypeDelete:
 				peer := string(ev.Kv.Value)
 				log.Printf("[HTTPPool] Peer removed: %s", peer)
@@ -210,9 +240,21 @@ func (p *HTTPPool) publishInvalidationViaEtcd(group, key string) {
 }
 
 // Set 设置其他节点的地址，用于从其他节点获取数据
-func (p *HTTPPool) Set(peers ...string) {
+func (p *HTTPPool) Set(peers ...string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	if p.peerClientTLS != nil {
+		for _, peer := range peers {
+			peer = strings.TrimSpace(peer)
+			if peer == "" {
+				continue
+			}
+			if !strings.HasPrefix(peer, "https://") {
+				return fmt.Errorf("geecache: peer TLS enabled: peer URL must use https://, got %q", peer)
+			}
+		}
+	}
 
 	// 1. 初始化一致性哈希环
 	// 这里的 3 是虚拟节点倍数，可以根据实际情况调整
@@ -222,14 +264,19 @@ func (p *HTTPPool) Set(peers ...string) {
 	// 2. 为每个节点创建一个 httpGetter 客户端
 	p.httpGetters = make(map[string]*httpGetter, len(peers))
 	p.grpcClients = make(map[string]*GRPCClient, len(peers))
+	var outboundGRPC credentials.TransportCredentials
+	if p.peerClientTLS != nil {
+		outboundGRPC = credentials.NewTLS(p.peerClientTLS.Clone())
+	}
 	for _, peer := range peers {
-		p.httpGetters[peer] = NewHTTPGetter(peer, p.basePath, p)
-		if c, err := NewGRPCClient(peer, grpcTarget(peer), p); err == nil {
+		p.httpGetters[peer] = NewHTTPGetter(peer, p.basePath, p.peerAuthToken, p.peerClientTLS)
+		if c, err := NewGRPCClient(peer, grpcTarget(peer), p.peerAuthToken, outboundGRPC); err == nil {
 			p.grpcClients[peer] = c
 		} else {
 			log.Printf("[HTTPPool] grpc client for %s: %v", peer, err)
 		}
 	}
+	return nil
 }
 
 func (p *HTTPPool) PickPeer(key string) (PeerGetter, string) {
@@ -342,9 +389,9 @@ func (p *HTTPPool) ownerForKey(key string) (string, error) {
 	return owner, nil
 }
 
-func (p *HTTPPool) AddPeers(peers ...string) {
+func (p *HTTPPool) AddPeers(peers ...string) error {
 	log.Println("[HTTPPool] AddPeers", peers)
-	p.Set(peers...)
+	return p.Set(peers...)
 }
 
 func (p *HTTPPool) RemovePeer(peer string) {
@@ -371,6 +418,14 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, p.basePath), "/")
 	if len(parts) != 3 {
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	p.mu.Lock()
+	expectTok := p.peerAuthToken
+	p.mu.Unlock()
+	if expectTok != "" && !peerHTTPAuthOK(expectTok, r.Header.Get(PeerAuthHTTPHeader)) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -460,18 +515,30 @@ func (p *HTTPPool) Stop(ctx context.Context) error {
 }
 
 type httpGetter struct {
-	peer     string
-	basePath string
-	client   *http.Client
-	remover  PeerRemover
+	peer      string
+	basePath  string
+	client    *http.Client
+	peerToken string
 }
 
-func NewHTTPGetter(peer string, basePath string, remover PeerRemover) *httpGetter {
+func NewHTTPGetter(peer string, basePath string, peerToken string, peerTLS *tls.Config) *httpGetter {
+	client := &http.Client{Timeout: defaultHTTPTimeout}
+	if peerTLS != nil {
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.TLSClientConfig = peerTLS.Clone()
+		client.Transport = tr
+	}
 	return &httpGetter{
-		peer:     peer,
-		basePath: basePath,
-		client:   &http.Client{Timeout: defaultHTTPTimeout},
-		remover:  remover,
+		peer:      peer,
+		basePath:  basePath,
+		client:    client,
+		peerToken: peerToken,
+	}
+}
+
+func (h *httpGetter) setPeerAuth(req *http.Request) {
+	if h.peerToken != "" {
+		req.Header.Set(PeerAuthHTTPHeader, h.peerToken)
 	}
 }
 
@@ -480,11 +547,13 @@ func (h *httpGetter) Get(group string, key string) ([]byte, error) {
 
 	u := h.peer + h.basePath + "/" + group + "/" + key
 
-	res, err := h.client.Get(u)
+	req, err := http.NewRequest(http.MethodGet, u, nil)
 	if err != nil {
-		if h.remover != nil {
-			h.remover.RemovePeer(h.peer)
-		}
+		return nil, err
+	}
+	h.setPeerAuth(req)
+	res, err := h.client.Do(req)
+	if err != nil {
 		return nil, err
 	}
 	defer res.Body.Close()
@@ -508,12 +577,9 @@ func (h *httpGetter) Set(group, key string, value []byte) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/octet-stream")
+	h.setPeerAuth(req)
 	res, err := h.client.Do(req)
 	if err != nil {
-		if h.remover != nil {
-			h.remover.RemovePeer(h.peer)
-		}
 		return err
 	}
 	defer res.Body.Close()
@@ -531,11 +597,9 @@ func (h *httpGetter) Invalidate(group, key string) error {
 	if err != nil {
 		return err
 	}
+	h.setPeerAuth(req)
 	res, err := h.client.Do(req)
 	if err != nil {
-		if h.remover != nil {
-			h.remover.RemovePeer(h.peer)
-		}
 		return err
 	}
 	defer res.Body.Close()
@@ -552,11 +616,9 @@ func (h *httpGetter) Purge(group, key string) error {
 	if err != nil {
 		return err
 	}
+	h.setPeerAuth(req)
 	res, err := h.client.Do(req)
 	if err != nil {
-		if h.remover != nil {
-			h.remover.RemovePeer(h.peer)
-		}
 		return err
 	}
 	defer res.Body.Close()
@@ -574,7 +636,7 @@ var _ PeerGetter = (*httpGetter)(nil)
 
 func grpcTarget(peer string) string {
 	if u, err := url.Parse(peer); err == nil && u.Host != "" {
-		return u.Host // "localhost:8001"
+		return u.Host // 例如 "localhost:8001"
 	}
-	return peer // 已经是 host:port
+	return peer // 已是 host:port 形式
 }

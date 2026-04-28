@@ -33,7 +33,7 @@ const (
 // gRPC 服务
 type CacheServiceClient interface {
 	// 测试
-	Test(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error)
+	Test(ctx context.Context, in *TestRequest, opts ...grpc.CallOption) (*TestResponse, error)
 	Get(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error)
 	// 在归属节点写入并失效其它节点副本
 	Set(ctx context.Context, in *SetRequest, opts ...grpc.CallOption) (*Empty, error)
@@ -51,9 +51,9 @@ func NewCacheServiceClient(cc grpc.ClientConnInterface) CacheServiceClient {
 	return &cacheServiceClient{cc}
 }
 
-func (c *cacheServiceClient) Test(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error) {
+func (c *cacheServiceClient) Test(ctx context.Context, in *TestRequest, opts ...grpc.CallOption) (*TestResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(Response)
+	out := new(TestResponse)
 	err := c.cc.Invoke(ctx, CacheService_Test_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -108,7 +108,7 @@ func (c *cacheServiceClient) Purge(ctx context.Context, in *InvalidateRequest, o
 // gRPC 服务
 type CacheServiceServer interface {
 	// 测试
-	Test(context.Context, *Request) (*Response, error)
+	Test(context.Context, *TestRequest) (*TestResponse, error)
 	Get(context.Context, *Request) (*Response, error)
 	// 在归属节点写入并失效其它节点副本
 	Set(context.Context, *SetRequest) (*Empty, error)
@@ -126,7 +126,7 @@ type CacheServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedCacheServiceServer struct{}
 
-func (UnimplementedCacheServiceServer) Test(context.Context, *Request) (*Response, error) {
+func (UnimplementedCacheServiceServer) Test(context.Context, *TestRequest) (*TestResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Test not implemented")
 }
 func (UnimplementedCacheServiceServer) Get(context.Context, *Request) (*Response, error) {
@@ -163,7 +163,7 @@ func RegisterCacheServiceServer(s grpc.ServiceRegistrar, srv CacheServiceServer)
 }
 
 func _CacheService_Test_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Request)
+	in := new(TestRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func _CacheService_Test_Handler(srv interface{}, ctx context.Context, dec func(i
 		FullMethod: CacheService_Test_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CacheServiceServer).Test(ctx, req.(*Request))
+		return srv.(CacheServiceServer).Test(ctx, req.(*TestRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }

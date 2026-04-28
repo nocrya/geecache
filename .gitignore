@@ -33,3 +33,6 @@ go.work.sum
 
 # Local data (Bolt + backing files from scripts/start-three.ps1)
 data/
+
+# mTLS demo certs (scripts/gencerts-mtls.ps1)
+certs/mtls-demo/

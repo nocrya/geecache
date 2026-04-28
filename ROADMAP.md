@@ -7,7 +7,7 @@
 - 分布式读路径：`Group.Get` → 本地 LRU → 一致性哈希选 peer → HTTP 或 gRPC 拉取 → 本地 Getter 回源；`singleflight` 防击穿。
 - 同一端口：`cmux` 复用 HTTP（含 `/geecache/...`）与 gRPC。
 - 服务发现：etcd 注册、租约、Watch 更新 peer 列表。
-- 工程化片段：peer 超时（HTTP / gRPC）、Prometheus 指标（`/metrics`）、`PeerPicker` 抽象、`mainCache` 指针化、**Ctrl+C 优雅关停**（gRPC `GracefulStop`、HTTP `Shutdown`、撤销 etcd 租约、关闭 listener）等。
+- 工程化片段：peer 超时（HTTP / gRPC）、Prometheus 指标（`/metrics`）、**`GET /healthz` 存活探测**（不经 `HTTPPool`，无 peer token 要求）、**可选节点间 mTLS**（独立 `-peer-mtls-listen`，`HTTPPool.SetPeerClientTLS` + `https://` peer）、`PeerPicker` 抽象、`mainCache` 指针化、**Ctrl+C 优雅关停**（gRPC `GracefulStop`、HTTP `Shutdown`、撤销 etcd 租约、关闭 listener）等。
 
 后续阶段均在此基础上叠加。
 
@@ -20,7 +20,7 @@
 
 | 工作项         | 说明                                                                                                          |
 | ----------- | ----------------------------------------------------------------------------------------------------------- |
-| 客户端超时       | HTTP：`http.Client.Timeout`；gRPC：`context.WithTimeout`（已实现，可按环境调参）。                                          |
+| 健康检查        | **`GET /healthz`**：`200` + `ok\n`，`Cache-Control: no-store`；供 K8s/LB；不经过 `HTTPPool`（已实现）。                                                                 |
 | 优雅关停        | `SIGINT`/`SIGTERM`：先 `GracefulStop`/`Shutdown` 排空请求，再 `HTTPPool.Stop` 撤销租约并关 peer 连接，最后 `lis.Close()`（已实现）。 |
 | etcd 续约失败恢复 | `KeepAlive` 通道关闭或超时后：指数退避重连、重新 `Grant` + `Put` + `KeepAlive`。                                               |
 | gRPC 连接生命周期 | 长连接复用 stub（已有）；关停时统一 `Close`；可选连接池/限并发。                                                                     |
